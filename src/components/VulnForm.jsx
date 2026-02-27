@@ -1,5 +1,9 @@
 import { useState } from 'react';
 
+const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
+const MAX_DAYS = 36500;
+const MAX_ASSET_COUNT = 100_000;
+
 const EMPTY_FORM = {
   cveId: '',
   title: '',
@@ -33,7 +37,11 @@ export default function VulnForm({ onAdd }) {
 
   function validate() {
     const next = {};
-    if (!form.cveId.trim()) next.cveId = 'CVE ID is required';
+    if (!form.cveId.trim()) {
+      next.cveId = 'CVE ID is required';
+    } else if (!CVE_PATTERN.test(form.cveId.trim())) {
+      next.cveId = 'CVE ID must match format CVE-YYYY-NNNNN (e.g. CVE-2024-12345)';
+    }
     if (!form.title.trim()) next.title = 'Title is required';
 
     const cvss = Number(form.cvssScore);
@@ -48,6 +56,8 @@ export default function VulnForm({ onAdd }) {
       next.daysSinceDiscovery = 'Days since discovery is required';
     } else if (days < 0) {
       next.daysSinceDiscovery = 'Must be 0 or greater';
+    } else if (days > MAX_DAYS) {
+      next.daysSinceDiscovery = `Must be ${MAX_DAYS.toLocaleString()} days or less`;
     }
 
     const assets = Number(form.affectedAssetCount);
@@ -55,6 +65,8 @@ export default function VulnForm({ onAdd }) {
       next.affectedAssetCount = 'Affected asset count is required';
     } else if (assets < 0) {
       next.affectedAssetCount = 'Must be 0 or greater';
+    } else if (assets > MAX_ASSET_COUNT) {
+      next.affectedAssetCount = `Must be ${MAX_ASSET_COUNT.toLocaleString()} or less`;
     }
 
     return next;

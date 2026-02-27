@@ -1,6 +1,15 @@
 import { useState, useRef } from 'react';
 import { parseCSV, INTERNAL_FIELDS, autoDetectMapping, applyMapping } from '../utils/csvParser';
 
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const ALLOWED_MIME_TYPES = [
+  'text/csv',
+  'application/csv',
+  'application/vnd.ms-excel',
+  'text/plain',
+  'text/comma-separated-values',
+];
+
 // ─── Step constants ───────────────────────────────────────────────────────────
 
 const STEP = {
@@ -46,6 +55,18 @@ export default function CsvImport({ onImport }) {
 
     if (!file.name.toLowerCase().endsWith('.csv')) {
       setParseError('Only .csv files are accepted.');
+      return;
+    }
+
+    if (file.type && !ALLOWED_MIME_TYPES.includes(file.type)) {
+      setParseError('Invalid file type. Please upload a valid CSV file.');
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setParseError(
+        `File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum allowed size is 10 MB.`
+      );
       return;
     }
 

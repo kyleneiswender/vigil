@@ -210,6 +210,17 @@ function parseExploitability(raw) {
   return null;
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** NVD standard CVE identifier pattern (case-insensitive). */
+const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
+
+/** Maximum accepted value for daysSinceDiscovery (~100 years). */
+const MAX_DAYS = 36500;
+
+/** Maximum accepted value for affectedAssetCount. */
+const MAX_ASSET_COUNT = 100_000;
+
 // ─── Row processing ───────────────────────────────────────────────────────────
 
 /**
@@ -240,7 +251,11 @@ export function applyMapping(rows, headers, mapping) {
 
     // ── Required: CVE ID ──────────────────────────────────────────────────────
     const cveId = getCell(row, 'cveId');
-    if (!cveId) errors.push('CVE ID is blank');
+    if (!cveId) {
+      errors.push('CVE ID is blank');
+    } else if (!CVE_PATTERN.test(cveId)) {
+      errors.push(`CVE ID "${cveId}" does not match the expected format CVE-YYYY-NNNNN`);
+    }
 
     // ── Required: CVSS score ──────────────────────────────────────────────────
     const cvssRaw = getCell(row, 'cvssScore');
@@ -269,10 +284,14 @@ export function applyMapping(rows, headers, mapping) {
     const exploitability = (exploitRaw && parseExploitability(exploitRaw)) || 'Theoretical';
 
     const daysRaw = getCell(row, 'daysSinceDiscovery');
-    const daysSinceDiscovery = daysRaw !== '' ? Math.max(0, parseInt(daysRaw, 10) || 0) : 0;
+    const daysSinceDiscovery = daysRaw !== ''
+      ? Math.min(MAX_DAYS, Math.max(0, parseInt(daysRaw, 10) || 0))
+      : 0;
 
     const assetsRaw = getCell(row, 'affectedAssetCount');
-    const affectedAssetCount = assetsRaw !== '' ? Math.max(0, parseInt(assetsRaw, 10) || 0) : 1;
+    const affectedAssetCount = assetsRaw !== ''
+      ? Math.min(MAX_ASSET_COUNT, Math.max(0, parseInt(assetsRaw, 10) || 0))
+      : 1;
 
     valid.push({
       id: crypto.randomUUID(),

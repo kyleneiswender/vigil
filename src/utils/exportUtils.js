@@ -5,12 +5,49 @@
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-/** Wrap a CSV field in quotes if it contains commas, quotes, or newlines. */
-function escapeField(v) {
+/**
+ * Sanitize a value against CSV formula injection (Fix B).
+ * If the stringified value starts with a spreadsheet formula-trigger character
+ * (=  +  -  @  |  tab), a tab is prepended so that Excel/Sheets treats the
+ * cell as plain text instead of evaluating a formula.
+ *
+ * Exported for unit testing.
+ *
+ * @param {*} v - Any value; null/undefined become ''
+ * @returns {string} Safe string ready for CSV quoting
+ */
+export function sanitizeCsvField(v) {
   const s = String(v ?? '');
-  return s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')
+  if (s === '') return s;
+  return /^[=+\-@|\t]/.test(s) ? '\t' + s : s;
+}
+
+/**
+ * Wrap a CSV field in quotes if it contains commas, quotes, newlines, or tabs.
+ * Tabs may be injected by sanitizeCsvField and must be quoted so they stay
+ * inside the field boundary.
+ */
+function escapeField(v) {
+  const s = sanitizeCsvField(v);
+  return s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r') || s.includes('\t')
     ? `"${s.replace(/"/g, '""')}"`
     : s;
+}
+
+/**
+ * Escape a string for safe interpolation into an HTML document (Fix A).
+ * Prevents stored XSS when user-supplied data is written via document.write().
+ *
+ * @param {*} v - Any value; null/undefined become ''
+ * @returns {string} HTML-entity-escaped string
+ */
+function htmlEscape(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function todayISO() {
@@ -120,16 +157,16 @@ export function exportPDF(rows, weights) {
       return `
         <tr style="background:${s.bg};border-left:3px solid ${s.border}">
           <td class="rank">${i + 1}</td>
-          <td class="mono">${v.cveId}</td>
-          <td class="title">${v.title}</td>
+          <td class="mono">${htmlEscape(v.cveId)}</td>
+          <td class="title">${htmlEscape(v.title)}</td>
           <td class="num">${Number(v.cvssScore).toFixed(1)}</td>
-          <td>${v.assetCriticality}</td>
+          <td>${htmlEscape(v.assetCriticality)}</td>
           <td>${v.internetFacing ? 'Yes' : 'No'}</td>
-          <td>${v.exploitability}</td>
-          <td class="num">${v.daysSinceDiscovery}</td>
+          <td>${htmlEscape(v.exploitability)}</td>
+          <td class="num">${Number(v.daysSinceDiscovery)}</td>
           <td class="num">${Number(v.affectedAssetCount).toLocaleString()}</td>
-          <td class="num bold">${v.compositeScore}</td>
-          <td class="bold" style="color:${s.text}">${v.riskTier.tier}</td>
+          <td class="num bold">${Number(v.compositeScore)}</td>
+          <td class="bold" style="color:${s.text}">${htmlEscape(v.riskTier.tier)}</td>
         </tr>`;
     })
     .join('');
