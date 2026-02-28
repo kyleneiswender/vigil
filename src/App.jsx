@@ -2,59 +2,77 @@ import { useState, useEffect } from 'react';
 import VulnForm from './components/VulnForm';
 import VulnTable from './components/VulnTable';
 import CsvImport from './components/CsvImport';
-import { scoreVulnerability } from './utils/scoringEngine';
+import WeightConfig from './components/WeightConfig';
+import { scoreVulnerability, DEFAULT_WEIGHTS } from './utils/scoringEngine';
 
-// --- localStorage persistence ---
+// ─── localStorage keys ────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'vuln-prioritization-data';
+const DATA_KEY    = 'vuln-prioritization-data';
+const WEIGHTS_KEY = 'vuln-prioritization-weights';
 
-/**
- * Fill in defaults for any fields that didn't exist when a record was saved.
- * Add new fields here as the data model grows to keep old records valid.
- */
-const RECORD_DEFAULTS = {
-  affectedAssetCount: 0,
-};
+// ─── Persistence helpers ──────────────────────────────────────────────────────
+
+const RECORD_DEFAULTS = { affectedAssetCount: 0 };
 
 function migrateRecord(raw) {
   return { ...RECORD_DEFAULTS, ...raw };
 }
 
-function loadFromStorage() {
+function loadWeights() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(WEIGHTS_KEY);
+    if (!raw) return { ...DEFAULT_WEIGHTS };
+    const parsed = JSON.parse(raw);
+    if (
+      typeof parsed !== 'object' ||
+      !Object.keys(DEFAULT_WEIGHTS).every((k) => typeof parsed[k] === 'number')
+    ) {
+      return { ...DEFAULT_WEIGHTS };
+    }
+    return parsed;
+  } catch {
+    return { ...DEFAULT_WEIGHTS };
+  }
+}
+
+function loadFromStorage(weights) {
+  try {
+    const raw = localStorage.getItem(DATA_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.map(migrateRecord);
+    // Migrate schema and re-score with current weights to ensure consistency
+    return parsed.map((r) => scoreVulnerability(migrateRecord(r), weights));
   } catch {
-    // Corrupt JSON or storage disabled — start fresh
     return [];
   }
 }
 
 function saveToStorage(data) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(DATA_KEY, JSON.stringify(data));
   } catch {
     // Quota exceeded or storage disabled — fail silently
   }
 }
 
-// --- App ---
+// ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  // Lazy initializer: runs once on mount, not on every render
-  const [vulnerabilities, setVulnerabilities] = useState(() => loadFromStorage());
+  // Weights must be initialised before vulnerabilities so re-scoring on startup is correct
+  const [weights, setWeights] = useState(() => loadWeights());
+  const [vulnerabilities, setVulnerabilities] = useState(() => loadFromStorage(loadWeights()));
 
-  // Auto-save whenever the list changes (add, delete, or import)
+  // Auto-save whenever state changes
+  useEffect(() => { saveToStorage(vulnerabilities); }, [vulnerabilities]);
   useEffect(() => {
-    saveToStorage(vulnerabilities);
-  }, [vulnerabilities]);
+    try { localStorage.setItem(WEIGHTS_KEY, JSON.stringify(weights)); } catch {}
+  }, [weights]);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────────
 
   function handleAdd(vuln) {
-    const scored = scoreVulnerability(vuln);
-    setVulnerabilities((prev) => [...prev, scored]);
+    setVulnerabilities((prev) => [...prev, scoreVulnerability(vuln, weights)]);
   }
 
   function handleDelete(id) {
@@ -62,8 +80,13 @@ export default function App() {
   }
 
   function handleImport(records) {
-    const scored = records.map(scoreVulnerability);
-    setVulnerabilities((prev) => [...prev, ...scored]);
+    setVulnerabilities((prev) => [...prev, ...records.map((r) => scoreVulnerability(r, weights))]);
+  }
+
+  function handleWeightsChange(newWeights) {
+    setWeights(newWeights);
+    // Immediately re-score every stored vulnerability with the new weights
+    setVulnerabilities((prev) => prev.map((v) => scoreVulnerability(v, newWeights)));
   }
 
   function handleClearAll() {
@@ -74,38 +97,25 @@ export default function App() {
     ) {
       return;
     }
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // ignore
-    }
+    try { localStorage.removeItem(DATA_KEY); } catch {}
     setVulnerabilities([]);
   }
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Header */}
+      {/* ── Header ── */}
       <header className="bg-white border-b border-gray-200 shadow-sm">
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="h-5 w-5 text-white"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.39-.223-2.73-.635-3.985a.75.75 0 00-.722-.516l-.143.001c-2.996 0-5.717-1.17-7.734-3.08z"
-                    clipRule="evenodd"
-                  />
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 text-white">
+                  <path fillRule="evenodd" d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.39-.223-2.73-.635-3.985a.75.75 0 00-.722-.516l-.143.001c-2.996 0-5.717-1.17-7.734-3.08z" clipRule="evenodd" />
                 </svg>
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">Sprint 2 &mdash; Bulk import &amp; composite risk scoring</p>
+                <p className="text-xs text-gray-500">Sprint 3 &mdash; Prioritization, filtering and export</p>
               </div>
             </div>
 
@@ -121,17 +131,17 @@ export default function App() {
         </div>
       </header>
 
-      {/* Scoring legend */}
+      {/* ── Tier / weight legend ── */}
       <div className="bg-blue-50 border-b border-blue-100">
         <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6 lg:px-8">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-blue-700">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-blue-700">
             <span className="font-semibold">Score weights:</span>
-            <span>Asset Criticality 25%</span>
-            <span>Asset Count 20%</span>
-            <span>CVSS 20%</span>
-            <span>Internet Exposure 15%</span>
-            <span>Exploitability 15%</span>
-            <span>Age 5%</span>
+            <span>Criticality {weights.criticality}%</span>
+            <span>Asset Count {weights.assetCount}%</span>
+            <span>CVSS {weights.cvss}%</span>
+            <span>Exposure {weights.exposure}%</span>
+            <span>Exploitability {weights.exploitability}%</span>
+            <span>Age {weights.days}%</span>
             <span className="ml-auto flex items-center gap-3 font-medium">
               <Pill color="bg-red-600 text-white">Critical 80–100</Pill>
               <Pill color="bg-orange-500 text-white">High 60–79</Pill>
@@ -142,11 +152,12 @@ export default function App() {
         </div>
       </div>
 
-      {/* Main content */}
+      {/* ── Main content ── */}
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
         <CsvImport onImport={handleImport} />
         <VulnForm onAdd={handleAdd} />
-        <VulnTable vulnerabilities={vulnerabilities} onDelete={handleDelete} />
+        <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
+        <VulnTable vulnerabilities={vulnerabilities} onDelete={handleDelete} weights={weights} />
       </main>
     </div>
   );

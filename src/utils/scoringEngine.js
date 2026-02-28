@@ -1,7 +1,7 @@
 /**
  * Vulnerability Scoring Engine
  *
- * Composite risk score weights:
+ * Default composite risk score weights (integer percentages summing to 100):
  *   Asset Criticality:    25%
  *   Affected Asset Count: 20%  (log10 scale, ceiling = 1000 hosts)
  *   CVSS Base Score:      20%
@@ -11,7 +11,84 @@
  *
  * Each factor is normalized to 0–100 before weights are applied.
  * Final score is 0–100; mapped to a risk tier.
+ *
+ * calculateCompositeScore() and scoreVulnerability() both accept an optional
+ * `weights` argument so the UI can recalculate scores live when the user
+ * adjusts the weight configuration panel.
  */
+
+// ─── Weight model ─────────────────────────────────────────────────────────────
+
+/**
+ * Default weights as integer percentages. Must sum to 100.
+ * Keys match the `scores` object keys inside calculateCompositeScore.
+ */
+export const DEFAULT_WEIGHTS = {
+  criticality:   25,
+  assetCount:    20,
+  cvss:          20,
+  exposure:      15,
+  exploitability: 15,
+  days:           5,
+};
+
+/** Human-readable labels for each weight key, used in WeightConfig and PDF export. */
+export const WEIGHT_LABELS = {
+  criticality:   'Asset Criticality',
+  assetCount:    'Affected Asset Count',
+  cvss:          'CVSS v3 Base Score',
+  exposure:      'Internet Exposure',
+  exploitability: 'Exploitability',
+  days:          'Days Since Discovery',
+};
+
+/**
+ * Adjust one weight slider and proportionally redistribute the difference
+ * across the remaining five so the total always equals 100.
+ *
+ * Uses largest-remainder (Hare) rounding to prevent integer drift.
+ *
+ * @param {object} weights    - Current integer weight map
+ * @param {string} changedKey - The key whose slider was moved
+ * @param {number} newRaw     - The new value for changedKey (will be clamped 0–100)
+ * @returns {object} New weight map guaranteed to sum to 100
+ */
+export function redistributeWeights(weights, changedKey, newRaw) {
+  const newValue = Math.max(0, Math.min(100, Math.round(Number(newRaw))));
+  const otherKeys = Object.keys(weights).filter((k) => k !== changedKey);
+  const othersTotal = otherKeys.reduce((s, k) => s + weights[k], 0);
+  const remainingTarget = 100 - newValue;
+  const result = { ...weights, [changedKey]: newValue };
+
+  if (othersTotal === 0) {
+    // Edge case: all other weights are 0 — distribute evenly
+    const base = Math.floor(remainingTarget / otherKeys.length);
+    let leftover = remainingTarget - base * otherKeys.length;
+    otherKeys.forEach((k) => {
+      result[k] = base + (leftover-- > 0 ? 1 : 0);
+    });
+  } else {
+    // Scale proportionally then apply Hare rounding
+    const floats = otherKeys.map((k) => ({
+      key: k,
+      float: (weights[k] / othersTotal) * remainingTarget,
+    }));
+    const floored = floats.map(({ key, float }) => ({
+      key,
+      floor: Math.floor(float),
+      frac: float - Math.floor(float),
+    }));
+    const floorSum = floored.reduce((s, { floor }) => s + floor, 0);
+    let leftover = remainingTarget - floorSum;
+    // Give leftover to the entries with the largest fractional parts
+    floored.sort((a, b) => b.frac - a.frac);
+    floored.forEach(({ key, floor }) => {
+      result[key] = floor + (leftover-- > 0 ? 1 : 0);
+    });
+  }
+
+  return result;
+}
 
 // --- Normalization helpers ---
 
@@ -94,25 +171,26 @@ export function normalizeAffectedAssetCount(count) {
  * @param {string} vuln.exploitability       - 'Theoretical' | 'PoC Exists' | 'Actively Exploited'
  * @param {number} vuln.daysSinceDiscovery   - Number of days since discovery
  * @param {number} vuln.affectedAssetCount   - Number of affected hosts/assets
+ * @param {object} [weights]                 - Integer weight map (default: DEFAULT_WEIGHTS)
  * @returns {number} Composite score rounded to one decimal place
  */
-export function calculateCompositeScore(vuln) {
+export function calculateCompositeScore(vuln, weights = DEFAULT_WEIGHTS) {
   const scores = {
-    criticality: normalizeAssetCriticality(vuln.assetCriticality),
-    assetCount: normalizeAffectedAssetCount(vuln.affectedAssetCount),
-    cvss: normalizeCvss(vuln.cvssScore),
-    exposure: normalizeInternetExposure(vuln.internetFacing),
+    criticality:   normalizeAssetCriticality(vuln.assetCriticality),
+    assetCount:    normalizeAffectedAssetCount(vuln.affectedAssetCount),
+    cvss:          normalizeCvss(vuln.cvssScore),
+    exposure:      normalizeInternetExposure(vuln.internetFacing),
     exploitability: normalizeExploitability(vuln.exploitability),
-    days: normalizeDays(vuln.daysSinceDiscovery),
+    days:          normalizeDays(vuln.daysSinceDiscovery),
   };
 
   const composite =
-    scores.criticality  * 0.25 +
-    scores.assetCount   * 0.20 +
-    scores.cvss         * 0.20 +
-    scores.exposure     * 0.15 +
-    scores.exploitability * 0.15 +
-    scores.days         * 0.05;
+    scores.criticality   * (weights.criticality   / 100) +
+    scores.assetCount    * (weights.assetCount    / 100) +
+    scores.cvss          * (weights.cvss          / 100) +
+    scores.exposure      * (weights.exposure      / 100) +
+    scores.exploitability * (weights.exploitability / 100) +
+    scores.days          * (weights.days          / 100);
 
   return Math.round(composite * 10) / 10;
 }
@@ -166,9 +244,12 @@ export function getRiskTier(score) {
 /**
  * Score and annotate a vulnerability object.
  * Returns a new object with compositeScore and riskTier added.
+ *
+ * @param {object} vuln        - Raw vulnerability data
+ * @param {object} [weights]   - Integer weight map (default: DEFAULT_WEIGHTS)
  */
-export function scoreVulnerability(vuln) {
-  const compositeScore = calculateCompositeScore(vuln);
+export function scoreVulnerability(vuln, weights = DEFAULT_WEIGHTS) {
+  const compositeScore = calculateCompositeScore(vuln, weights);
   const riskTier = getRiskTier(compositeScore);
   return { ...vuln, compositeScore, riskTier };
 }
