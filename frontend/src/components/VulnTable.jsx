@@ -315,7 +315,7 @@ export default function VulnTable({ vulnerabilities, onDelete, weights }) {
 // ─── Row ──────────────────────────────────────────────────────────────────────
 
 function VulnRow({ vuln, rank, onDelete }) {
-  const { bg, border } = getRiskTier(vuln.compositeScore);
+  const { bg, border } = getRiskTier(vuln.compositeScore ?? 0);
 
   return (
     <tr className={`${bg} border-l-4 ${border} transition-colors hover:brightness-95`}>
@@ -331,7 +331,7 @@ function VulnRow({ vuln, rank, onDelete }) {
         <span className="block truncate text-gray-900" title={vuln.title}>{vuln.title}</span>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-center">
-        <CvssChip score={vuln.cvssScore} />
+        <CvssChip score={vuln.cvssScore ?? 0} />
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <CriticalityBadge value={vuln.assetCriticality} />
@@ -347,16 +347,16 @@ function VulnRow({ vuln, rank, onDelete }) {
         )}
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-center text-gray-700">
-        {vuln.daysSinceDiscovery}
+        {vuln.daysSinceDiscovery ?? 0}
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-center text-gray-700">
-        {vuln.affectedAssetCount.toLocaleString()}
+        {(vuln.affectedAssetCount ?? 0).toLocaleString()}
       </td>
       <td className="whitespace-nowrap px-4 py-3">
-        <ScoreBar score={vuln.compositeScore} />
+        <ScoreBar score={vuln.compositeScore ?? 0} />
       </td>
       <td className="whitespace-nowrap px-4 py-3">
-        <TierBadge score={vuln.compositeScore} />
+        <TierBadge score={vuln.compositeScore ?? 0} />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right">
         <button

@@ -1,16 +1,72 @@
-# React + Vite
+# Vulnerability Prioritization Tool
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A self-hosted web application for triaging and prioritising security vulnerabilities using a configurable composite scoring model.
 
-Currently, two official plugins are available:
+## What it does
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Enter vulnerabilities manually or import them from CSV. Each vulnerability is scored 0–100 using six weighted factors (CVSS score, asset criticality, asset count, internet exposure, exploitability, and days since discovery). Scores are grouped into **Critical / High / Medium / Low** risk tiers. Weights are fully adjustable per organisation and are persisted to the backend.
 
-## React Compiler
+Data is stored in [PocketBase](https://pocketbase.io/) — a single self-contained binary — so nothing leaves your network.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Prerequisites
 
-## Expanding the ESLint configuration
+| Requirement | Notes |
+|---|---|
+| **Node.js 18+** | For the Vite frontend |
+| **curl + unzip** | Used by `start.sh` to auto-download PocketBase (macOS / Linux) |
+| **PowerShell 5+** | Used by `start.bat` to auto-download PocketBase (Windows — included by default) |
+| **Internet access (first run only)** | To download the PocketBase binary from GitHub releases |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Setup (3 steps)
+
+```bash
+# 1. Clone the repo
+git clone <repo-url> vuln-prioritization-tool
+cd vuln-prioritization-tool
+
+# 2. Run the start script
+./start.sh          # macOS / Linux
+start.bat           # Windows (double-click or run in cmd)
+
+# 3. Open the app
+# http://localhost:5173
+```
+
+The start script will:
+- Download the latest PocketBase binary into `backend/` if it is not already present
+- Run `npm install` in `frontend/` if `node_modules/` is missing
+- Start PocketBase on port **8090** (runs migrations on first launch)
+- Start the Vite dev server on port **5173**
+
+## First-time admin setup
+
+On the very first run PocketBase will prompt you to create a **superadmin** account at:
+
+```
+http://localhost:8090/_/
+```
+
+After creating the superadmin:
+
+1. Create an **organization** record (Collections → organizations → New record)
+2. Create one or more **user** accounts (Collections → users → New record), setting their `organization` field to the organization you just created
+3. Share the credentials with your team — users log in at `http://localhost:5173`
+
+> There is no self-service registration. All accounts are managed by the admin.
+
+## Scoring methodology
+
+| Factor | Default weight | Normalisation |
+|---|---|---|
+| Asset Criticality | 25 % | Low = 25, Med = 50, High = 75, Critical = 100 |
+| Affected Asset Count | 20 % | log₁₀(count + 1) / log₁₀(1001) × 100 |
+| CVSS Base Score | 20 % | score × 10 |
+| Internet Exposure | 15 % | false = 0, true = 100 |
+| Exploitability | 15 % | Theoretical = 25, PoC = 60, Actively Exploited = 100 |
+| Days Since Discovery | 5 % | min(days / 365, 1) × 100 |
+
+Weights are adjustable per organisation via the Scoring Configuration panel and are persisted to PocketBase.
+
+## Issues
+
+Please report bugs and feature requests at: https://github.com/your-org/vuln-prioritization-tool/issues
