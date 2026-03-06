@@ -46,6 +46,7 @@ export async function fetchVulnerabilities(organizationId) {
   const records = await pb.collection('vulnerabilities').getFullList({
     filter: `organization = "${organizationId}"`,
     sort: '-compositeScore',
+    requestKey: null, // prevent StrictMode double-invocation from auto-cancelling
   });
   return records.map(mapRecord);
 }
@@ -174,6 +175,7 @@ export async function fetchGroups(organizationId) {
 export async function fetchScoringWeights(organizationId) {
   const items = await pb.collection('scoring_weights').getFullList({
     filter: `organization = "${organizationId}"`,
+    requestKey: null, // prevent StrictMode double-invocation from auto-cancelling
   });
   return items[0] ?? null;
 }
