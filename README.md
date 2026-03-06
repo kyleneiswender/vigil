@@ -67,6 +67,10 @@ After creating the superadmin:
 
 Weights are adjustable per organisation via the Scoring Configuration panel and are persisted to PocketBase.
 
+## Troubleshooting
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for help with stuck processes, database backups, resets, and port conflicts.
+
 ## Issues
 
 Please report bugs and feature requests at: https://github.com/your-org/vuln-prioritization-tool/issues

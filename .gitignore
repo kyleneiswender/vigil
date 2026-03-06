@@ -16,6 +16,7 @@ dist-ssr
 backend/pocketbase
 backend/pocketbase.exe
 backend/pb_data/
+backups/
 
 # Editor directories and files
 .vscode/*

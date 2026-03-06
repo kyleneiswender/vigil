@@ -41,29 +41,12 @@ if not exist "%FRONTEND_DIR%\node_modules" (
   popd
 )
 
-REM ── Start PocketBase ────────────────────────────────────────────────────────
+REM ── Launch services via PowerShell for reliable Ctrl-C cleanup ───────────────
+REM PowerShell captures child PIDs and kills them in a try/finally block,
+REM which batch cannot do natively. -ExecutionPolicy Bypass is scoped to
+REM this invocation only and does not change the system-wide policy.
 
-echo [start.bat] Starting PocketBase on http://localhost:8090 ...
-start "PocketBase" /B "%PB_BIN%" serve ^
-  --http=localhost:8090 ^
-  --dir="%BACKEND_DIR%\pb_data" ^
-  --migrationsDir="%BACKEND_DIR%\pb_migrations"
-
-REM Give PocketBase time to run migrations
-timeout /t 2 /nobreak > nul
-
-REM ── Start Vite dev server ────────────────────────────────────────────────────
-
-echo [start.bat] Starting Vite dev server on http://localhost:5173 ...
-pushd "%FRONTEND_DIR%"
-start "Vite" /B npm run dev
-popd
-
-echo.
-echo   PocketBase admin UI  -^>  http://localhost:8090/_/
-echo   App                  -^>  http://localhost:5173
-echo.
-echo   Close this window or press Ctrl-C to stop.
-
-REM Keep window open
-pause
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%_start_services.ps1" ^
+  -PbBin "%PB_BIN%" ^
+  -BackendDir "%BACKEND_DIR%" ^
+  -FrontendDir "%FRONTEND_DIR%"
