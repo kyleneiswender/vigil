@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { fetchGroups, fetchUsers } from '../lib/api.js';
 
 const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
 const MAX_DAYS = 36500;
@@ -13,9 +14,9 @@ const selectClass = inputClass;
  * Slide-in side panel for editing an existing vulnerability record.
  * Validation rules mirror VulnForm.jsx exactly.
  *
- * @param {{ vuln: object, onSave: (id: string, data: object) => Promise<void>, onCancel: () => void }} props
+ * @param {{ vuln: object, organizationId: string, onSave: (id: string, data: object) => Promise<void>, onCancel: () => void }} props
  */
-export default function VulnEditPanel({ vuln, onSave, onCancel }) {
+export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }) {
   const [form, setForm] = useState(() => ({
     cveId:              vuln.cveId ?? '',
     title:              vuln.title ?? '',
@@ -25,9 +26,14 @@ export default function VulnEditPanel({ vuln, onSave, onCancel }) {
     exploitability:     vuln.exploitability ?? 'Theoretical',
     daysSinceDiscovery: vuln.daysSinceDiscovery ?? '',
     affectedAssetCount: vuln.affectedAssetCount ?? '',
+    group:              vuln.group      ?? '',
+    assignedTo:         vuln.assignedTo ?? '',
   }));
-  const [errors, setErrors]   = useState({});
-  const [saving, setSaving]   = useState(false);
+  const [errors, setErrors]       = useState({});
+  const [saving, setSaving]       = useState(false);
+  const [groups, setGroups]       = useState([]);
+  const [users,  setUsers]        = useState([]);
+  const [optLoading, setOptLoading] = useState(true);
   const panelRef = useRef(null);
 
   // Close on Escape key
@@ -42,6 +48,15 @@ export default function VulnEditPanel({ vuln, onSave, onCancel }) {
   // Focus the panel on open for accessibility
   useEffect(() => {
     panelRef.current?.focus();
+  }, []);
+
+  // Fetch groups and users for the assignment dropdowns
+  useEffect(() => {
+    Promise.all([fetchGroups(organizationId), fetchUsers(organizationId)])
+      .then(([gs, us]) => { setGroups(gs); setUsers(us); })
+      .catch(() => {}) // non-blocking — dropdowns just stay empty on error
+      .finally(() => setOptLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleChange(e) {
@@ -311,6 +326,57 @@ export default function VulnEditPanel({ vuln, onSave, onCancel }) {
                 </p>
               </div>
             </label>
+          </div>
+
+          {/* Group */}
+          <div>
+            <label htmlFor="edit-group" className={labelClass}>
+              Group
+            </label>
+            <select
+              id="edit-group"
+              name="group"
+              value={form.group}
+              onChange={handleChange}
+              disabled={saving || optLoading}
+              className={selectClass}
+            >
+              {optLoading ? (
+                <option value="">Loading…</option>
+              ) : groups.length === 0 ? (
+                <>
+                  <option value="">No group</option>
+                  <option value="" disabled>No groups available — create groups in settings</option>
+                </>
+              ) : (
+                <>
+                  <option value="">No group</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
+                  ))}
+                </>
+              )}
+            </select>
+          </div>
+
+          {/* Assigned To */}
+          <div>
+            <label htmlFor="edit-assignedTo" className={labelClass}>
+              Assigned To
+            </label>
+            <select
+              id="edit-assignedTo"
+              name="assignedTo"
+              value={form.assignedTo}
+              onChange={handleChange}
+              disabled={saving || optLoading}
+              className={selectClass}
+            >
+              <option value="">Unassigned</option>
+              {!optLoading && users.map((u) => (
+                <option key={u.id} value={u.id}>{u.email}</option>
+              ))}
+            </select>
           </div>
         </form>
 

@@ -46,6 +46,7 @@ export async function fetchVulnerabilities(organizationId) {
   const records = await pb.collection('vulnerabilities').getFullList({
     filter: `organization = "${organizationId}"`,
     sort: '-compositeScore',
+    expand: 'group,assigned_to',
     requestKey: null, // prevent StrictMode double-invocation from auto-cancelling
   });
   return records.map(mapRecord);
@@ -109,9 +110,13 @@ export async function updateVulnerability(id, vuln, organizationId) {
     compositeScore:      vuln.compositeScore,
     riskTier:            vuln.riskTier?.tier ?? vuln.riskTier ?? '',
     organization:        effectiveOrgId,
+    group:               vuln.group       || null,
+    assigned_to:         vuln.assignedTo  || null,
   };
 
-  const record = await pb.collection('vulnerabilities').update(id, updates);
+  const record = await pb.collection('vulnerabilities').update(id, updates, {
+    expand: 'group,assigned_to',
+  });
 
   const changedFields = Object.keys(updates).filter(
     (k) => updates[k] !== previous[k]
@@ -163,6 +168,15 @@ export async function fetchGroups(organizationId) {
   return pb.collection('groups').getFullList({
     filter: `organization = "${organizationId}"`,
     sort:   'name',
+  });
+}
+
+/** Fetch all users for the given organization, sorted by email. */
+export async function fetchUsers(organizationId) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+  return pb.collection('users').getFullList({
+    filter: `organization = "${effectiveOrgId}"`,
+    sort:   'email',
   });
 }
 
@@ -260,6 +274,9 @@ function mapRecord(record) {
     riskTier:           record.riskTier            ?? 'Low',
     status:             record.status              ?? 'open',
     group:              record.group               ?? '',
+    groupName:          record.expand?.group?.name        ?? '',
+    assignedTo:         record.assigned_to                ?? '',
+    assignedToEmail:    record.expand?.assigned_to?.email ?? '',
     organization:       record.organization        ?? '',
     created:            record.created,
     updated:            record.updated,
@@ -280,6 +297,8 @@ function _vulnSnapshot(record) {
     affectedAssetCount: record.affectedAssetCount,
     compositeScore:     record.compositeScore,
     riskTier:           record.riskTier,
+    group:              record.group        ?? null,
+    assigned_to:        record.assigned_to  ?? null,
   };
 }
 

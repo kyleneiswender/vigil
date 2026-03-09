@@ -16,6 +16,8 @@ const COLUMNS = [
   { key: 'affectedAssetCount', label: 'Assets',          align: 'center' },
   { key: 'compositeScore',     label: 'Composite Score', align: 'left'   },
   { key: 'riskTier',           label: 'Risk Tier',       align: 'left'   },
+  { key: 'groupName',          label: 'Group',           align: 'left'   },
+  { key: 'assignedToEmail',    label: 'Assigned To',     align: 'left'   },
 ];
 
 // ─── Display sub-components (unchanged from Sprint 1/2) ───────────────────────
@@ -357,6 +359,16 @@ function VulnRow({ vuln, rank, onDelete, onEdit }) {
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <TierBadge score={vuln.compositeScore ?? 0} />
+      </td>
+      <td className="max-w-[120px] px-4 py-3">
+        <span className="block truncate text-sm text-gray-500" title={vuln.groupName || undefined}>
+          {vuln.groupName || '—'}
+        </span>
+      </td>
+      <td className="max-w-[160px] px-4 py-3">
+        <span className="block truncate text-sm text-gray-500" title={vuln.assignedToEmail || undefined}>
+          {vuln.assignedToEmail || '—'}
+        </span>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right">
         <div className="flex items-center justify-end gap-1">
