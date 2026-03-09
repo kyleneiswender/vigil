@@ -247,7 +247,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.5.1 &mdash; Group and user assignment</p>
+                <p className="text-xs text-gray-500">v0.5.2 &mdash; Advanced filtering</p>
               </div>
             </div>
 

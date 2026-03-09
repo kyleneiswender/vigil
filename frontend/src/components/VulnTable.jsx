@@ -106,7 +106,10 @@ function SortIcon({ colKey, sortKey, sortDir }) {
 
 const fSelectClass = 'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
 
-function FilterBar({ filters, onChange, onClear, hasFilters }) {
+function FilterBar({ filters, onChange, onClear, hasFilters, vulnerabilities }) {
+  const groupOptions = [...new Set(vulnerabilities.map((v) => v.groupName).filter(Boolean))].sort();
+  const userOptions  = [...new Set(vulnerabilities.map((v) => v.assignedToEmail).filter(Boolean))].sort();
+
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-6 py-3">
       {/* Text search */}
@@ -146,6 +149,21 @@ function FilterBar({ filters, onChange, onClear, hasFilters }) {
         <option value="no">Internal Only</option>
       </select>
 
+      <select value={filters.groupName} onChange={(e) => onChange('groupName', e.target.value)} className={fSelectClass}>
+        <option value="">All Groups</option>
+        {groupOptions.map((name) => (
+          <option key={name} value={name}>{name}</option>
+        ))}
+      </select>
+
+      <select value={filters.assignedTo} onChange={(e) => onChange('assignedTo', e.target.value)} className={fSelectClass}>
+        <option value="">All Users</option>
+        <option value="__unassigned__">Unassigned</option>
+        {userOptions.map((email) => (
+          <option key={email} value={email}>{email}</option>
+        ))}
+      </select>
+
       {hasFilters && (
         <button type="button" onClick={onClear}
           className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 shadow-sm hover:bg-gray-100 transition-colors">
@@ -161,7 +179,7 @@ function FilterBar({ filters, onChange, onClear, hasFilters }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-const EMPTY_FILTERS = { search: '', riskTier: '', assetCriticality: '', internetFacing: '' };
+const EMPTY_FILTERS = { search: '', riskTier: '', assetCriticality: '', internetFacing: '', groupName: '', assignedTo: '' };
 
 export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights }) {
   const [filters, setFilters]   = useState(EMPTY_FILTERS);
@@ -248,7 +266,7 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights }
       </div>
 
       {/* ── Filter bar ── */}
-      <FilterBar filters={filters} onChange={handleFilterChange} onClear={clearFilters} hasFilters={hasFilters} />
+      <FilterBar filters={filters} onChange={handleFilterChange} onClear={clearFilters} hasFilters={hasFilters} vulnerabilities={vulnerabilities} />
 
       {/* ── Table ── */}
       <div className="overflow-x-auto">
