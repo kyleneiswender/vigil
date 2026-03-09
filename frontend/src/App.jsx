@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import VulnForm      from './components/VulnForm';
-import VulnTable     from './components/VulnTable';
-import VulnEditPanel from './components/VulnEditPanel';
-import CsvImport     from './components/CsvImport';
-import WeightConfig  from './components/WeightConfig';
-import Auth          from './components/Auth';
+import VulnForm             from './components/VulnForm';
+import VulnTable            from './components/VulnTable';
+import VulnEditPanel        from './components/VulnEditPanel';
+import CsvImport            from './components/CsvImport';
+import WeightConfig         from './components/WeightConfig';
+import Auth                 from './components/Auth';
+import UserManagementPanel  from './components/UserManagementPanel';
 import { pb, isAuthenticated, getCurrentUser, logout } from './lib/pocketbase.js';
 import {
   initializeUser,
@@ -28,6 +29,7 @@ export default function App() {
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [weights,         setWeights]         = useState({ ...DEFAULT_WEIGHTS });
   const [editingVuln,     setEditingVuln]     = useState(null);
+  const [showUserMgmt,    setShowUserMgmt]    = useState(false);
 
   // ── Re-check auth on authStore changes (e.g. token expiry) ─────────────────
   useEffect(() => {
@@ -247,7 +249,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.5.2 &mdash; Advanced filtering</p>
+                <p className="text-xs text-gray-500">v0.6.1 &mdash; User management</p>
               </div>
             </div>
 
@@ -263,6 +265,15 @@ export default function App() {
                 <span className="hidden sm:block text-xs text-gray-500 truncate max-w-[180px]">
                   {user.email}
                 </span>
+              )}
+              {/* Manage Users (admin only) */}
+              {user?.role === 'admin' && (
+                <button
+                  onClick={() => setShowUserMgmt(true)}
+                  className="rounded-md border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 hover:border-blue-300 transition-colors"
+                >
+                  Manage Users
+                </button>
               )}
               {/* Clear all */}
               {vulnerabilities.length > 0 && (
@@ -327,6 +338,14 @@ export default function App() {
           organizationId={organizationIdRef.current}
           onSave={handleEditSave}
           onCancel={() => setEditingVuln(null)}
+        />
+      )}
+
+      {showUserMgmt && (
+        <UserManagementPanel
+          organizationId={organizationIdRef.current}
+          currentUserId={user?.id}
+          onClose={() => setShowUserMgmt(false)}
         />
       )}
     </div>

@@ -175,9 +175,71 @@ export async function fetchGroups(organizationId) {
 export async function fetchUsers(organizationId) {
   const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
   return pb.collection('users').getFullList({
-    filter: `organization = "${effectiveOrgId}"`,
-    sort:   'email',
+    filter:     `organization = "${effectiveOrgId}"`,
+    sort:       'email',
+    requestKey: null, // prevent StrictMode double-invocation from auto-cancelling
   });
+}
+
+/**
+ * Create a new user account and write a user_invited audit log entry.
+ * Requires the calling user to have role = 'admin' (enforced by PocketBase rules).
+ * Sets verified = true because the admin is providing the password directly.
+ */
+export async function inviteUser(email, password, fullName, role, organizationId) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+  const record = await pb.collection('users').create({
+    email,
+    emailVisibility: true,
+    password,
+    passwordConfirm: password,
+    name:            fullName || '',
+    role,
+    organization:    effectiveOrgId,
+  });
+  await _writeAccessAudit({
+    action:         'user_invited',
+    resourceType:   'user',
+    resourceId:     record.id,
+    details:        { email, role, name: fullName || '' },
+    organizationId: effectiveOrgId,
+  });
+  return record;
+}
+
+/**
+ * Update a user's role and write a role_changed audit log entry.
+ * Fetches the previous role from PocketBase to include in the audit entry.
+ */
+export async function updateUserRole(userId, newRole, organizationId) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+  const previous = await pb.collection('users').getOne(userId);
+  const record   = await pb.collection('users').update(userId, { role: newRole });
+  await _writeAccessAudit({
+    action:         'role_changed',
+    resourceType:   'user',
+    resourceId:     userId,
+    details:        { previous_values: { role: previous.role }, new_values: { role: newRole } },
+    organizationId: effectiveOrgId,
+  });
+  return record;
+}
+
+/**
+ * Delete a user record and write a user_deleted audit log entry.
+ * Audit is written BEFORE deletion (mirrors deleteVulnerability pattern).
+ * PocketBase rules prevent admins from deleting their own account.
+ */
+export async function removeUser(userId, organizationId) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+  await _writeAccessAudit({
+    action:         'user_deleted',
+    resourceType:   'user',
+    resourceId:     userId,
+    details:        {},
+    organizationId: effectiveOrgId,
+  });
+  await pb.collection('users').delete(userId);
 }
 
 // ─── Scoring weights ──────────────────────────────────────────────────────────
