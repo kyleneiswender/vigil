@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import VulnForm    from './components/VulnForm';
-import VulnTable   from './components/VulnTable';
-import CsvImport   from './components/CsvImport';
-import WeightConfig from './components/WeightConfig';
-import Auth        from './components/Auth';
+import VulnForm      from './components/VulnForm';
+import VulnTable     from './components/VulnTable';
+import VulnEditPanel from './components/VulnEditPanel';
+import CsvImport     from './components/CsvImport';
+import WeightConfig  from './components/WeightConfig';
+import Auth          from './components/Auth';
 import { pb, isAuthenticated, getCurrentUser, logout } from './lib/pocketbase.js';
 import {
   initializeUser,
@@ -12,6 +13,7 @@ import {
   deleteVulnerability,
   fetchScoringWeights,
   updateScoringWeights,
+  updateVulnerability,
 } from './lib/api.js';
 import { scoreVulnerability, DEFAULT_WEIGHTS } from './utils/scoringEngine';
 
@@ -25,6 +27,7 @@ export default function App() {
   const organizationIdRef = useRef(null);
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [weights,         setWeights]         = useState({ ...DEFAULT_WEIGHTS });
+  const [editingVuln,     setEditingVuln]     = useState(null);
 
   // ── Re-check auth on authStore changes (e.g. token expiry) ─────────────────
   useEffect(() => {
@@ -160,6 +163,19 @@ export default function App() {
     }
   }
 
+  async function handleEditSave(id, updatedFields) {
+    const scored = scoreVulnerability(updatedFields, weights);
+    try {
+      const record = await updateVulnerability(id, scored, organizationIdRef.current);
+      setVulnerabilities((prev) =>
+        prev.map((v) => (v.id === id ? scoreVulnerability(record, weights) : v))
+      );
+      setEditingVuln(null);
+    } catch (err) {
+      setError('Failed to update vulnerability: ' + (err?.message ?? 'unknown error'));
+    }
+  }
+
   function handleLogout() {
     logout();
     organizationIdRef.current = null;
@@ -231,7 +247,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v2 &mdash; Persistent storage and authentication</p>
+                <p className="text-xs text-gray-500">v0.5.0 &mdash; Editable records</p>
               </div>
             </div>
 
@@ -302,8 +318,16 @@ export default function App() {
         <CsvImport    onImport={handleImport} />
         <VulnForm     onAdd={handleAdd} />
         <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
-        <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} weights={weights} />
+        <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} onEdit={(vuln) => setEditingVuln(vuln)} weights={weights} />
       </main>
+
+      {editingVuln && (
+        <VulnEditPanel
+          vuln={editingVuln}
+          onSave={handleEditSave}
+          onCancel={() => setEditingVuln(null)}
+        />
+      )}
     </div>
   );
 }

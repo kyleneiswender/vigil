@@ -101,7 +101,7 @@ migrate((app) => {
   vulnerabilities.fields.addAt(vulnerabilities.fields.length, new Field({
     type: "text", id: "text_vuln_cveId", name: "cveId",
     required: true, system: false, hidden: false, presentable: true,
-    primaryKey: false, autogeneratePattern: "", min: 0, max: 0, pattern: "",
+    primaryKey: false, autogeneratePattern: "", min: 0, max: 0, pattern: "^CVE-\\d{4}-\\d{4,}$",
   }));
   vulnerabilities.fields.addAt(vulnerabilities.fields.length, new Field({
     type: "text", id: "text_vuln_title", name: "title",
