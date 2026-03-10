@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { lookupNvd } from '../lib/api.js';
 
 const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
 const MAX_DAYS = 36500;
@@ -19,10 +20,29 @@ const labelClass = 'block text-sm font-medium text-gray-700 mb-1';
 const inputClass =
   'w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
 const selectClass = inputClass;
+const errCls  = 'border-red-400 focus:border-red-500 focus:ring-red-500';
+const fillCls = 'ring-1 ring-blue-300 bg-blue-50';
 
-export default function VulnForm({ onAdd }) {
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [errors, setErrors] = useState({});
+// ─── Spinner ──────────────────────────────────────────────────────────────────
+
+function Spinner() {
+  return (
+    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+// ─── VulnForm ─────────────────────────────────────────────────────────────────
+
+export default function VulnForm({ onAdd, nvdApiKey = '' }) {
+  const [form,      setForm]      = useState(EMPTY_FORM);
+  const [errors,    setErrors]    = useState({});
+  const [nvdStatus, setNvdStatus] = useState({ status: 'idle', message: '' });
+  // status: 'idle' | 'loading' | 'error' | 'warn'
+  const [nvdFilled, setNvdFilled] = useState(new Set());
+  // field names auto-filled by NVD; cleared when the user edits the field
 
   function handleChange(e) {
     const { name, value, type, checked } = e.target;
@@ -33,6 +53,42 @@ export default function VulnForm({ onAdd }) {
     if (errors[name]) {
       setErrors((prev) => ({ ...prev, [name]: null }));
     }
+    if (nvdFilled.has(name)) {
+      setNvdFilled((prev) => { const next = new Set(prev); next.delete(name); return next; });
+    }
+  }
+
+  async function handleNvdLookup() {
+    setNvdStatus({ status: 'loading', message: '' });
+    const result = await lookupNvd(form.cveId.trim(), nvdApiKey || null);
+
+    if (result.error === 'not_found') {
+      setNvdStatus({ status: 'error', message: 'CVE not found in NVD. You can still enter details manually.' });
+      return;
+    }
+    if (result.error === 'rate_limited') {
+      setNvdStatus({ status: 'error', message: 'NVD rate limit reached. Wait 30 seconds or add an API key in Settings for a higher limit.' });
+      return;
+    }
+    if (result.error === 'network_error') {
+      setNvdStatus({ status: 'error', message: 'Could not reach NVD. Check your connection and try again.' });
+      return;
+    }
+    if (result.error === 'malformed') {
+      setNvdStatus({ status: 'error', message: 'Unexpected response from NVD. You can still enter details manually.' });
+      return;
+    }
+
+    const updates = {};
+    const filled  = new Set();
+    if (result.description) { updates.title     = result.description;          filled.add('title'); }
+    if (result.hasV3)       { updates.cvssScore = String(result.cvssV3Score); filled.add('cvssScore'); }
+
+    setForm((prev) => ({ ...prev, ...updates }));
+    setNvdFilled(filled);
+    setNvdStatus(result.hasV2Only
+      ? { status: 'warn', message: `NVD has no CVSS v3 score for this CVE. CVSS v2 score is ${result.cvssV2Score} — please enter v3 manually.` }
+      : { status: 'idle', message: '' });
   }
 
   function validate() {
@@ -82,7 +138,7 @@ export default function VulnForm({ onAdd }) {
 
     onAdd({
       ...form,
-      cvssScore: Number(form.cvssScore),
+      cvssScore:          Number(form.cvssScore),
       daysSinceDiscovery: Number(form.daysSinceDiscovery),
       affectedAssetCount: Number(form.affectedAssetCount),
       id: crypto.randomUUID(),
@@ -90,7 +146,12 @@ export default function VulnForm({ onAdd }) {
 
     setForm(EMPTY_FORM);
     setErrors({});
+    setNvdStatus({ status: 'idle', message: '' });
+    setNvdFilled(new Set());
   }
+
+  const cveIsValid = CVE_PATTERN.test(form.cveId.trim());
+  const lookupBusy = nvdStatus.status === 'loading';
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -104,24 +165,46 @@ export default function VulnForm({ onAdd }) {
       <form onSubmit={handleSubmit} noValidate className="px-6 py-5">
         {/* Row 1: CVE ID + Title */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {/* CVE ID with NVD lookup */}
           <div>
             <label htmlFor="cveId" className={labelClass}>
               CVE ID <span className="text-red-500">*</span>
             </label>
-            <input
-              id="cveId"
-              name="cveId"
-              type="text"
-              placeholder="CVE-2024-12345"
-              value={form.cveId}
-              onChange={handleChange}
-              className={`${inputClass} ${errors.cveId ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''}`}
-            />
+            <div className="flex gap-2 items-start">
+              <input
+                id="cveId"
+                name="cveId"
+                type="text"
+                placeholder="CVE-2024-12345"
+                value={form.cveId}
+                onChange={handleChange}
+                className={`flex-1 ${inputClass} ${errors.cveId ? errCls : ''}`}
+              />
+              <button
+                type="button"
+                onClick={handleNvdLookup}
+                disabled={!cveIsValid || lookupBusy}
+                title={cveIsValid ? 'Look up CVE in NVD' : 'Enter a valid CVE ID first'}
+                aria-label="Look up CVE in NVD"
+                className="shrink-0 rounded-md border border-gray-300 px-3 py-2 text-xs font-medium
+                           text-gray-700 hover:bg-gray-50 transition-colors
+                           disabled:opacity-40 disabled:cursor-not-allowed
+                           flex items-center gap-1.5"
+              >
+                {lookupBusy ? <Spinner /> : 'Look up'}
+              </button>
+            </div>
             {errors.cveId && (
               <p className="mt-1 text-xs text-red-600">{errors.cveId}</p>
             )}
+            {nvdStatus.message && (
+              <p className={`mt-1 text-xs ${nvdStatus.status === 'error' ? 'text-red-600' : 'text-amber-600'}`}>
+                {nvdStatus.message}
+              </p>
+            )}
           </div>
 
+          {/* Title */}
           <div>
             <label htmlFor="title" className={labelClass}>
               Title / Description <span className="text-red-500">*</span>
@@ -133,7 +216,7 @@ export default function VulnForm({ onAdd }) {
               placeholder="Remote code execution via buffer overflow"
               value={form.title}
               onChange={handleChange}
-              className={`${inputClass} ${errors.title ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''}`}
+              className={`${inputClass} ${nvdFilled.has('title') ? fillCls : ''} ${errors.title ? errCls : ''}`}
             />
             {errors.title && (
               <p className="mt-1 text-xs text-red-600">{errors.title}</p>
@@ -157,7 +240,7 @@ export default function VulnForm({ onAdd }) {
               placeholder="7.5"
               value={form.cvssScore}
               onChange={handleChange}
-              className={`${inputClass} ${errors.cvssScore ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''}`}
+              className={`${inputClass} ${nvdFilled.has('cvssScore') ? fillCls : ''} ${errors.cvssScore ? errCls : ''}`}
             />
             {errors.cvssScore && (
               <p className="mt-1 text-xs text-red-600">{errors.cvssScore}</p>
@@ -214,7 +297,7 @@ export default function VulnForm({ onAdd }) {
               placeholder="30"
               value={form.daysSinceDiscovery}
               onChange={handleChange}
-              className={`${inputClass} ${errors.daysSinceDiscovery ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''}`}
+              className={`${inputClass} ${errors.daysSinceDiscovery ? errCls : ''}`}
             />
             {errors.daysSinceDiscovery && (
               <p className="mt-1 text-xs text-red-600">{errors.daysSinceDiscovery}</p>
@@ -233,7 +316,7 @@ export default function VulnForm({ onAdd }) {
               placeholder="50"
               value={form.affectedAssetCount}
               onChange={handleChange}
-              className={`${inputClass} ${errors.affectedAssetCount ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''}`}
+              className={`${inputClass} ${errors.affectedAssetCount ? errCls : ''}`}
             />
             {errors.affectedAssetCount && (
               <p className="mt-1 text-xs text-red-600">{errors.affectedAssetCount}</p>

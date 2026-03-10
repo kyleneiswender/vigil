@@ -242,6 +242,91 @@ export async function removeUser(userId, organizationId) {
   await pb.collection('users').delete(userId);
 }
 
+// ─── Org settings ─────────────────────────────────────────────────────────────
+
+/**
+ * Fetch the org_settings record for the given organization.
+ * Returns null if no record exists yet (first-time use).
+ */
+export async function fetchOrgSettings(organizationId) {
+  const items = await pb.collection('org_settings').getFullList({
+    filter:     `organization = "${organizationId}"`,
+    requestKey: null,
+  });
+  return items[0] ?? null;
+}
+
+/**
+ * Upsert the org_settings record for an organization.
+ * Creates the record if it doesn't exist, updates it if it does.
+ * @param {string} organizationId
+ * @param {object} settings  - { nvd_api_key }
+ */
+export async function updateOrgSettings(organizationId, settings) {
+  const existing = await fetchOrgSettings(organizationId);
+  const data = {
+    organization: organizationId,
+    nvd_api_key:  settings.nvd_api_key ?? '',
+  };
+  if (existing) return pb.collection('org_settings').update(existing.id, data);
+  return pb.collection('org_settings').create(data);
+}
+
+// ─── NVD lookup ───────────────────────────────────────────────────────────────
+
+/**
+ * Look up a CVE in the NIST NVD API.
+ * Uses native fetch (not the PocketBase SDK) — no auth required.
+ *
+ * Returns one of:
+ *   { error: 'not_found' | 'rate_limited' | 'network_error' | 'malformed' }
+ *   { description, cvssV3Score, cvssV3Vector, cvssV2Score, hasV3, hasV2Only }
+ *
+ * @param {string}      cveId   - e.g. "CVE-2021-44228"
+ * @param {string|null} apiKey  - NVD API key; raises rate limit from 5/30s to 50/30s
+ */
+export async function lookupNvd(cveId, apiKey = null) {
+  const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId)}`;
+  const headers = {};
+  if (apiKey) headers['apiKey'] = apiKey;
+
+  let response;
+  try {
+    response = await fetch(url, { headers });
+  } catch (_) {
+    return { error: 'network_error' };
+  }
+
+  if (response.status === 404) return { error: 'not_found' };
+  if (response.status === 403 || response.status === 429) return { error: 'rate_limited' };
+  if (!response.ok) return { error: 'network_error' };
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (_) {
+    return { error: 'malformed' };
+  }
+
+  if (!data.vulnerabilities?.length) return { error: 'not_found' };
+
+  const cve         = data.vulnerabilities[0].cve;
+  const description = cve.descriptions?.find((d) => d.lang === 'en')?.value ?? null;
+  const cvssV3      = cve.metrics?.cvssMetricV31?.[0]?.cvssData
+                   ?? cve.metrics?.cvssMetricV30?.[0]?.cvssData
+                   ?? null;
+  const cvssV2      = cve.metrics?.cvssMetricV2?.[0]?.cvssData ?? null;
+
+  return {
+    description,
+    cvssV3Score:  cvssV3?.baseScore  ?? null,
+    cvssV3Vector: cvssV3?.vectorString ?? null,
+    cvssV2Score:  cvssV2?.baseScore  ?? null,
+    hasV3:        cvssV3 !== null,
+    hasV2Only:    cvssV3 === null && cvssV2 !== null,
+  };
+}
+
 // ─── Scoring weights ──────────────────────────────────────────────────────────
 
 /**

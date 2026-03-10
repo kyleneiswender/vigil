@@ -6,6 +6,7 @@ import CsvImport            from './components/CsvImport';
 import WeightConfig         from './components/WeightConfig';
 import Auth                 from './components/Auth';
 import UserManagementPanel  from './components/UserManagementPanel';
+import SettingsPanel        from './components/SettingsPanel';
 import { pb, isAuthenticated, getCurrentUser, logout } from './lib/pocketbase.js';
 import {
   initializeUser,
@@ -15,6 +16,7 @@ import {
   fetchScoringWeights,
   updateScoringWeights,
   updateVulnerability,
+  fetchOrgSettings,
 } from './lib/api.js';
 import { scoreVulnerability, DEFAULT_WEIGHTS } from './utils/scoringEngine';
 
@@ -30,6 +32,8 @@ export default function App() {
   const [weights,         setWeights]         = useState({ ...DEFAULT_WEIGHTS });
   const [editingVuln,     setEditingVuln]     = useState(null);
   const [showUserMgmt,    setShowUserMgmt]    = useState(false);
+  const [showSettings,    setShowSettings]    = useState(false);
+  const [orgSettings,     setOrgSettings]     = useState(null);
 
   // ── Re-check auth on authStore changes (e.g. token expiry) ─────────────────
   useEffect(() => {
@@ -69,10 +73,13 @@ export default function App() {
       }
       organizationIdRef.current = orgId;
 
-      const [records, weightsRecord] = await Promise.all([
+      const [records, weightsRecord, settingsRecord] = await Promise.all([
         fetchVulnerabilities(orgId),
         fetchScoringWeights(orgId),
+        fetchOrgSettings(orgId),
       ]);
+
+      setOrgSettings(settingsRecord);
 
       const resolvedWeights = weightsRecord
         ? {
@@ -183,6 +190,7 @@ export default function App() {
     organizationIdRef.current = null;
     setVulnerabilities([]);
     setWeights({ ...DEFAULT_WEIGHTS });
+    setOrgSettings(null);
     setLoadFailed(false);
     setError('');
   }
@@ -249,7 +257,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.6.1 &mdash; User management</p>
+                <p className="text-xs text-gray-500">v0.7.0 &mdash; NVD integration</p>
               </div>
             </div>
 
@@ -266,6 +274,13 @@ export default function App() {
                   {user.email}
                 </span>
               )}
+              {/* Settings (all users) */}
+              <button
+                onClick={() => setShowSettings(true)}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Settings
+              </button>
               {/* Manage Users (admin only) */}
               {user?.role === 'admin' && (
                 <button
@@ -327,7 +342,7 @@ export default function App() {
       {/* ── Main content ── */}
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
         <CsvImport    onImport={handleImport} />
-        <VulnForm     onAdd={handleAdd} />
+        <VulnForm     onAdd={handleAdd} nvdApiKey={orgSettings?.nvd_api_key ?? ''} />
         <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
         <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} onEdit={(vuln) => setEditingVuln(vuln)} weights={weights} />
       </main>
@@ -346,6 +361,15 @@ export default function App() {
           organizationId={organizationIdRef.current}
           currentUserId={user?.id}
           onClose={() => setShowUserMgmt(false)}
+        />
+      )}
+
+      {showSettings && (
+        <SettingsPanel
+          organizationId={organizationIdRef.current}
+          currentUser={user}
+          onClose={() => setShowSettings(false)}
+          onSettingsSaved={(updated) => setOrgSettings((prev) => ({ ...prev, ...updated }))}
         />
       )}
     </div>
