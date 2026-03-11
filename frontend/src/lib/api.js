@@ -334,6 +334,35 @@ export async function lookupNvd(cveId, apiKey = null) {
   };
 }
 
+// ─── EPSS API lookup ──────────────────────────────────────────────────────────
+
+/**
+ * Look up EPSS score and percentile for a CVE from the FIRST.org EPSS API.
+ * The API is public with no authentication required and supports CORS.
+ *
+ * @param {string} cveId - CVE identifier, e.g. 'CVE-2021-44228'
+ * @returns {{ epssScore: number, epssPercentile: number } | { error: string }}
+ */
+export async function lookupEpss(cveId) {
+  const url = `https://api.first.org/data/v1/epss?cve=${encodeURIComponent(cveId)}`;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return { error: 'network_error' };
+
+    const data = await response.json();
+    if (!data.data || data.data.length === 0) return { error: 'not_found' };
+
+    const entry = data.data[0];
+    return {
+      epssScore:      parseFloat(entry.epss),
+      epssPercentile: parseFloat(entry.percentile),
+    };
+  } catch {
+    return { error: 'network_error' };
+  }
+}
+
 // ─── Scoring weights ──────────────────────────────────────────────────────────
 
 /**

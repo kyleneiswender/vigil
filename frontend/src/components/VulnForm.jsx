@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { lookupNvd } from '../lib/api.js';
+import { lookupNvd, lookupEpss } from '../lib/api.js';
 import { formatEpssScore, formatEpssPercentile } from '../utils/epssUtils.js';
 
 const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
@@ -15,6 +15,8 @@ const EMPTY_FORM = {
   exploitability: 'Theoretical',
   daysSinceDiscovery: '',
   affectedAssetCount: '',
+  epssScore:      null,
+  epssPercentile: null,
 };
 
 const labelClass = 'block text-sm font-medium text-gray-700 mb-1';
@@ -61,34 +63,50 @@ export default function VulnForm({ onAdd, nvdApiKey = '' }) {
 
   async function handleNvdLookup() {
     setNvdStatus({ status: 'loading', message: '' });
-    const result = await lookupNvd(form.cveId.trim(), nvdApiKey || null);
+    const cveId = form.cveId.trim();
 
-    if (result.error === 'not_found') {
+    const [nvdSettled, epssSettled] = await Promise.allSettled([
+      lookupNvd(cveId, nvdApiKey || null),
+      lookupEpss(cveId),
+    ]);
+
+    const nvdResult  = nvdSettled.status  === 'fulfilled' ? nvdSettled.value  : { error: 'network_error' };
+    const epssResult = epssSettled.status === 'fulfilled' ? epssSettled.value : { error: 'network_error' };
+
+    if (nvdResult.error === 'not_found') {
       setNvdStatus({ status: 'error', message: 'CVE not found in NVD. You can still enter details manually.' });
       return;
     }
-    if (result.error === 'rate_limited') {
+    if (nvdResult.error === 'rate_limited') {
       setNvdStatus({ status: 'error', message: 'NVD rate limit reached. Wait 30 seconds or add an API key in Settings for a higher limit.' });
       return;
     }
-    if (result.error === 'network_error') {
+    if (nvdResult.error === 'network_error') {
       setNvdStatus({ status: 'error', message: 'Could not reach NVD. Check your connection and try again.' });
       return;
     }
-    if (result.error === 'malformed') {
+    if (nvdResult.error === 'malformed') {
       setNvdStatus({ status: 'error', message: 'Unexpected response from NVD. You can still enter details manually.' });
       return;
     }
 
     const updates = {};
     const filled  = new Set();
-    if (result.description) { updates.title     = result.description;          filled.add('title'); }
-    if (result.hasV3)       { updates.cvssScore = String(result.cvssV3Score); filled.add('cvssScore'); }
+    if (nvdResult.description) { updates.title     = nvdResult.description;           filled.add('title'); }
+    if (nvdResult.hasV3)       { updates.cvssScore = String(nvdResult.cvssV3Score);  filled.add('cvssScore'); }
+
+    // EPSS failure is silent — supplementary data, not an error state
+    if (!epssResult.error) {
+      updates.epssScore      = epssResult.epssScore;
+      updates.epssPercentile = epssResult.epssPercentile;
+      filled.add('epssScore');
+      filled.add('epssPercentile');
+    }
 
     setForm((prev) => ({ ...prev, ...updates }));
     setNvdFilled(filled);
-    setNvdStatus(result.hasV2Only
-      ? { status: 'warn', message: `NVD has no CVSS v3 score for this CVE. CVSS v2 score is ${result.cvssV2Score} — please enter v3 manually.` }
+    setNvdStatus(nvdResult.hasV2Only
+      ? { status: 'warn', message: `NVD has no CVSS v3 score for this CVE. CVSS v2 score is ${nvdResult.cvssV2Score} — please enter v3 manually.` }
       : { status: 'idle', message: '' });
   }
 
@@ -281,22 +299,27 @@ export default function VulnForm({ onAdd, nvdApiKey = '' }) {
               <option value="PoC Exists">PoC Exists</option>
               <option value="Actively Exploited">Actively Exploited</option>
             </select>
+            {form.epssScore !== null && form.epssScore >= 0.70 && form.exploitability !== 'Actively Exploited' && (
+              <p className="mt-1 text-xs text-amber-600">
+                EPSS score suggests high exploitation probability — consider setting to Actively Exploited
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Row 2b: EPSS Score + EPSS Percentile (read-only, populated via CVE lookup in v0.7.2) */}
+        {/* Row 2b: EPSS Score + EPSS Percentile (read-only, auto-populated via lookup) */}
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <p className={labelClass}>EPSS Score</p>
-            <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-              {formatEpssScore(null)}
+            <p className={`rounded-md border px-3 py-2 text-sm text-gray-700 ${nvdFilled.has('epssScore') ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}>
+              {formatEpssScore(form.epssScore)}
             </p>
             <p className="mt-1 text-xs text-gray-400">Populated automatically via CVE lookup</p>
           </div>
           <div>
             <p className={labelClass}>EPSS Percentile</p>
-            <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-              {formatEpssPercentile(null)}
+            <p className={`rounded-md border px-3 py-2 text-sm text-gray-700 ${nvdFilled.has('epssPercentile') ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}>
+              {formatEpssPercentile(form.epssPercentile)}
             </p>
             <p className="mt-1 text-xs text-gray-400">Populated automatically via CVE lookup</p>
           </div>

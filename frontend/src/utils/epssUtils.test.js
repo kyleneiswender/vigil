@@ -49,3 +49,35 @@ describe('formatEpssPercentile', () => {
     expect(formatEpssPercentile(undefined)).toBe('Not available');
   });
 });
+
+// ─── Suite N — exploitability suggestion threshold ────────────────────────────
+//
+// The suggestion renders when:
+//   epssScore !== null && epssScore >= 0.70 && exploitability !== 'Actively Exploited'
+//
+// These tests verify the threshold logic as a pure boolean expression.
+
+describe('exploitability suggestion threshold', () => {
+  const shouldSuggest = (epssScore, exploitability) =>
+    epssScore !== null && epssScore !== undefined && epssScore >= 0.70 && exploitability !== 'Actively Exploited';
+
+  it('N1: appears at exactly 0.70', () => {
+    expect(shouldSuggest(0.70, 'Theoretical')).toBe(true);
+  });
+
+  it('N2: appears above 0.70', () => {
+    expect(shouldSuggest(0.95, 'PoC Exists')).toBe(true);
+  });
+
+  it('N3: does not appear below 0.70', () => {
+    expect(shouldSuggest(0.69, 'Theoretical')).toBe(false);
+  });
+
+  it('N4: does not appear when exploitability is Actively Exploited', () => {
+    expect(shouldSuggest(0.95, 'Actively Exploited')).toBe(false);
+  });
+
+  it('N5: does not appear when epssScore is null', () => {
+    expect(shouldSuggest(null, 'Theoretical')).toBe(false);
+  });
+});

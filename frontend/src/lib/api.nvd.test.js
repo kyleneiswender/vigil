@@ -53,7 +53,7 @@ vi.mock('./pocketbase.js', () => ({
   logout: vi.fn(),
 }));
 
-import { initializeUser, lookupNvd, fetchOrgSettings, updateOrgSettings } from './api.js';
+import { initializeUser, lookupNvd, lookupEpss, fetchOrgSettings, updateOrgSettings } from './api.js';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -244,5 +244,97 @@ describe('J — updateOrgSettings(): upserts org settings', () => {
   it('J3: returns the saved record', async () => {
     const result = await updateOrgSettings(ORG_ID, { nvd_api_key: 'key_new' });
     expect(result).toEqual(UPDATED_SETTINGS);
+  });
+});
+
+// ─── EPSS fixture ─────────────────────────────────────────────────────────────
+
+/** Build a minimal valid FIRST.org EPSS API response for a single CVE. */
+function makeEpssResponse(epss = '0.94320', percentile = '0.97120') {
+  return {
+    data: [{ cve: 'CVE-2021-44228', epss, percentile, date: '2024-01-01' }],
+  };
+}
+
+// ─── Suite L: lookupEpss() ────────────────────────────────────────────────────
+
+describe('L — lookupEpss(): EPSS API lookup', () => {
+
+  it('L1: successful response — returns epssScore and epssPercentile as numbers', async () => {
+    mockFetchJson(200, makeEpssResponse('0.94320', '0.97120'));
+    const result = await lookupEpss('CVE-2021-44228');
+
+    expect(result.error).toBeUndefined();
+    expect(result.epssScore).toBeCloseTo(0.9432, 4);
+    expect(result.epssPercentile).toBeCloseTo(0.9712, 4);
+  });
+
+  it('L2: empty data array → { error: "not_found" }', async () => {
+    mockFetchJson(200, { data: [] });
+    expect(await lookupEpss('CVE-0000-0001')).toEqual({ error: 'not_found' });
+  });
+
+  it('L3: missing data property → { error: "not_found" }', async () => {
+    mockFetchJson(200, {});
+    expect(await lookupEpss('CVE-0000-0002')).toEqual({ error: 'not_found' });
+  });
+
+  it('L4: HTTP error (non-2xx) → { error: "network_error" }', async () => {
+    mockFetchJson(500, {});
+    expect(await lookupEpss('CVE-2021-44228')).toEqual({ error: 'network_error' });
+  });
+
+  it('L5: fetch throws (network error) → { error: "network_error" }', async () => {
+    mockFetchNetworkError();
+    expect(await lookupEpss('CVE-2021-44228')).toEqual({ error: 'network_error' });
+  });
+
+  it('L6: response.json() throws (malformed body) → { error: "network_error" }', async () => {
+    mockFetchMalformed(200);
+    expect(await lookupEpss('CVE-2021-44228')).toEqual({ error: 'network_error' });
+  });
+});
+
+// ─── Suite M: parallel lookup behavior ───────────────────────────────────────
+
+describe('M — parallel lookup: NVD+EPSS independence via Promise.allSettled', () => {
+
+  it('M1: EPSS failure does not prevent NVD data from being returned', async () => {
+    // NVD call is first (call #1), EPSS is second (call #2)
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(makeNvdResponse({ withV3: true })) })
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const [nvd, epss] = await Promise.allSettled([
+      lookupNvd('CVE-2021-44228', null),
+      lookupEpss('CVE-2021-44228'),
+    ]);
+
+    expect(nvd.status).toBe('fulfilled');
+    expect(nvd.value.error).toBeUndefined();
+    expect(nvd.value.description).toBe('A critical remote code execution vulnerability.');
+    expect(nvd.value.cvssV3Score).toBe(9.8);
+
+    expect(epss.status).toBe('fulfilled'); // allSettled never rejects
+    expect(epss.value.error).toBe('network_error');
+  });
+
+  it('M2: NVD not_found does not prevent EPSS data from being returned', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve({ vulnerabilities: [] }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve(makeEpssResponse()) });
+
+    const [nvd, epss] = await Promise.allSettled([
+      lookupNvd('CVE-2021-44228', null),
+      lookupEpss('CVE-2021-44228'),
+    ]);
+
+    expect(nvd.status).toBe('fulfilled');
+    expect(nvd.value.error).toBe('not_found');
+
+    expect(epss.status).toBe('fulfilled');
+    expect(epss.value.error).toBeUndefined();
+    expect(epss.value.epssScore).toBeCloseTo(0.9432, 4);
+    expect(epss.value.epssPercentile).toBeCloseTo(0.9712, 4);
   });
 });
