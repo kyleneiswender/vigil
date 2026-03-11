@@ -195,3 +195,38 @@ describe('sortVulns', () => {
     expect(result).toBe(vulns);
   });
 });
+
+// ─── sortVulns — dateAdded field (chronological) ────────────────────────────────
+
+describe('sortVulns — dateAdded field', () => {
+  const datedVulns = [
+    { id: 'c', riskTier: { tier: 'Low' }, dateAdded: '2026-03-15 10:00:00.000Z' },
+    { id: 'a', riskTier: { tier: 'Low' }, dateAdded: '2026-01-01 10:00:00.000Z' },
+    { id: 'b', riskTier: { tier: 'Low' }, dateAdded: '2026-02-15 10:00:00.000Z' },
+  ];
+
+  it('ascending order: oldest first', () => {
+    const result = sortVulns(datedVulns, 'dateAdded', 'asc');
+    expect(result.map((v) => v.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('descending order: newest first', () => {
+    const result = sortVulns(datedVulns, 'dateAdded', 'desc');
+    expect(result.map((v) => v.id)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('ISO 8601 string comparison preserves chronological order across month boundaries', () => {
+    const cross = [
+      { id: 'dec', riskTier: { tier: 'Low' }, dateAdded: '2025-12-31 23:59:59.000Z' },
+      { id: 'jan', riskTier: { tier: 'Low' }, dateAdded: '2026-01-01 00:00:00.000Z' },
+    ];
+    const result = sortVulns(cross, 'dateAdded', 'asc');
+    expect(result.map((v) => v.id)).toEqual(['dec', 'jan']);
+  });
+
+  it('does not mutate the input array', () => {
+    const original = [...datedVulns];
+    sortVulns(datedVulns, 'dateAdded', 'asc');
+    expect(datedVulns).toEqual(original);
+  });
+});

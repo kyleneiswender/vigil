@@ -464,6 +464,7 @@ function mapRecord(record) {
     assignedTo:         record.assigned_to                ?? '',
     assignedToEmail:    record.expand?.assigned_to?.email ?? '',
     organization:       record.organization        ?? '',
+    dateAdded:          record.dateAdded,
     created:            record.created,
     updated:            record.updated,
   };

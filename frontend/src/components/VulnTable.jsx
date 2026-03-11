@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { getRiskTier } from '../utils/scoringEngine';
 import { filterVulns, sortVulns } from '../utils/filterSort';
-import { exportCSV, exportPDF } from '../utils/exportUtils';
+import { exportCSV, exportPDF, formatDate } from '../utils/exportUtils';
 
 // ─── Column definitions ───────────────────────────────────────────────────────
 
@@ -17,6 +17,7 @@ const COLUMNS = [
   { key: 'affectedAssetCount', label: 'Assets',          align: 'center' },
   { key: 'compositeScore',     label: 'Composite Score', align: 'left'   },
   { key: 'riskTier',           label: 'Risk Tier',       align: 'left'   },
+  { key: 'dateAdded',          label: 'Date Added',      align: 'left'   },
   { key: 'groupName',          label: 'Group',           align: 'left'   },
   { key: 'assignedToEmail',    label: 'Assigned To',     align: 'left'   },
 ];
@@ -383,6 +384,9 @@ function VulnRow({ vuln, rank, onDelete, onEdit }) {
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <TierBadge score={vuln.compositeScore ?? 0} />
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
+        {formatDate(vuln.dateAdded)}
       </td>
       <td className="max-w-[120px] px-4 py-3">
         <span className="block truncate text-sm text-gray-500" title={vuln.groupName || undefined}>

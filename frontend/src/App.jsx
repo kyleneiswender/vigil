@@ -258,7 +258,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.7.3 &mdash; EPSS scoring</p>
+                <p className="text-xs text-gray-500">v0.7.4 &mdash; Date tracking</p>
               </div>
             </div>
 

@@ -3,6 +3,30 @@
  * No external dependencies; uses native browser APIs only.
  */
 
+// ─── Date formatting ──────────────────────────────────────────────────────────
+
+/**
+ * Format an ISO 8601 date string (as returned by PocketBase) as DD/MM/YYYY.
+ * PocketBase created timestamps look like '2026-03-01 18:09:57.642Z'.
+ * Returns '-' for null, undefined, empty string, or unparseable input.
+ *
+ * @param {string|null|undefined} dateString
+ * @returns {string} Formatted date or '-'
+ */
+export function formatDate(dateString) {
+  if (!dateString) return '-';
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '-';
+    const dd   = String(date.getDate()).padStart(2, '0');
+    const mm   = String(date.getMonth() + 1).padStart(2, '0');
+    const yyyy = date.getFullYear();
+    return `${mm}/${dd}/${yyyy}`;
+  } catch {
+    return '-';
+  }
+}
+
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -67,6 +91,7 @@ const CSV_HEADERS = [
   'Affected Asset Count',
   'Composite Score',
   'Risk Tier',
+  'Date Added',
 ];
 
 /**
@@ -90,6 +115,7 @@ export function exportCSV(rows) {
         v.affectedAssetCount,
         v.compositeScore,
         v.riskTier.tier,
+        formatDate(v.dateAdded),
       ]
         .map(escapeField)
         .join(',')
@@ -111,12 +137,13 @@ export function exportCSV(rows) {
 // ─── PDF export (browser print) ───────────────────────────────────────────────
 
 const WEIGHT_LABELS = {
-  criticality: 'Asset Criticality',
-  assetCount: 'Affected Asset Count',
-  cvss: 'CVSS v3 Base Score',
-  exposure: 'Internet Exposure',
+  criticality:   'Asset Criticality',
+  cvss:          'CVSS v3 Base Score',
+  assetCount:    'Affected Asset Count',
+  exposure:      'Internet Exposure',
   exploitability: 'Exploitability',
-  days: 'Days Since Discovery',
+  epss:          'EPSS Score',
+  days:          'Days Since Discovery',
 };
 
 /** Row background / accent colours matching the app's risk tier palette. */
@@ -167,6 +194,7 @@ export function exportPDF(rows, weights) {
           <td class="num">${Number(v.affectedAssetCount).toLocaleString()}</td>
           <td class="num bold">${Number(v.compositeScore)}</td>
           <td class="bold" style="color:${s.text}">${htmlEscape(v.riskTier.tier)}</td>
+          <td>${htmlEscape(formatDate(v.dateAdded))}</td>
         </tr>`;
     })
     .join('');
@@ -256,6 +284,7 @@ export function exportPDF(rows, weights) {
         <th style="text-align:right">Assets</th>
         <th style="text-align:right">Score</th>
         <th>Tier</th>
+        <th>Date Added</th>
       </tr>
     </thead>
     <tbody>${rowsHTML}</tbody>

@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 // will throw "does not provide an export named 'sanitizeCsvField'", making
 // every test in this file fail — which is intentional: it documents that the
 // export and its sanitisation behaviour must be implemented.
-import { sanitizeCsvField } from './exportUtils.js';
+import { sanitizeCsvField, formatDate } from './exportUtils.js';
 
 // ─── sanitizeCsvField ─────────────────────────────────────────────────────────
 //
@@ -71,5 +71,43 @@ describe('sanitizeCsvField — formula injection prevention (Fix B)', () => {
   it('numeric strings are unmodified', () => {
     expect(sanitizeCsvField('42')).toBe('42');
     expect(sanitizeCsvField('3.14')).toBe('3.14');
+  });
+});
+
+// ─── formatDate ───────────────────────────────────────────────────────────────
+
+describe('formatDate', () => {
+  it('valid PocketBase ISO string → MM/DD/YYYY (UTC test environment)', () => {
+    // PocketBase returns dateAdded as '2026-03-15 18:09:57.642Z'
+    // 18:09 UTC is March 15 in all UTC offsets from -17 to +5
+    // (UTC-17 does not exist; UTC-12 gives 06:09 = still March 15)
+    expect(formatDate('2026-03-15 18:09:57.642Z')).toBe('03/15/2026');
+  });
+
+  it('ISO 8601 T-format string → MM/DD/YYYY', () => {
+    expect(formatDate('2026-06-20T15:30:00.000Z')).toBe('06/20/2026');
+  });
+
+  it('null → "-"', () => {
+    expect(formatDate(null)).toBe('-');
+  });
+
+  it('undefined → "-"', () => {
+    expect(formatDate(undefined)).toBe('-');
+  });
+
+  it('empty string → "-"', () => {
+    expect(formatDate('')).toBe('-');
+  });
+
+  it('malformed string → "-"', () => {
+    expect(formatDate('not-a-date')).toBe('-');
+  });
+
+  it('midnight UTC produces a valid MM/DD/YYYY string (exact date is timezone-dependent)', () => {
+    // At 00:00 UTC, local date differs by timezone — we verify format, not specific value
+    const result = formatDate('2026-01-15T00:00:00.000Z');
+    expect(result).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(result).not.toBe('-');
   });
 });

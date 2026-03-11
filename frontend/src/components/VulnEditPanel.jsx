@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { fetchGroups, fetchUsers } from '../lib/api.js';
 import { formatEpssScore, formatEpssPercentile } from '../utils/epssUtils.js';
+import { formatDate } from '../utils/exportUtils.js';
 
 const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
 const MAX_DAYS = 36500;
@@ -240,6 +241,15 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
               </p>
               <p className="mt-1 text-xs text-gray-400">Populated automatically via CVE lookup</p>
             </div>
+          </div>
+
+          {/* Date Added (read-only) */}
+          <div>
+            <p className={labelClass}>Date Added</p>
+            <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+              {formatDate(vuln.dateAdded)}
+            </p>
+            <p className="mt-1 text-xs text-gray-400">Set automatically when the record was created.</p>
           </div>
 
           {/* Asset Criticality */}
