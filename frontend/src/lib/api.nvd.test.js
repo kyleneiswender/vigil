@@ -194,7 +194,8 @@ describe('H — lookupNvd(): NVD API lookup', () => {
     await lookupNvd('CVE-2021-44228', 'my-test-key');
 
     expect(global.fetch).toHaveBeenCalledOnce();
-    const [, options] = global.fetch.mock.calls[0];
+    const [url, options] = global.fetch.mock.calls[0];
+    expect(url).toContain('/nvd-api/');
     expect(options.headers['apiKey']).toBe('my-test-key');
   });
 });

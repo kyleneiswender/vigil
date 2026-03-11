@@ -276,7 +276,10 @@ export async function updateOrgSettings(organizationId, settings) {
 
 /**
  * Look up a CVE in the NIST NVD API.
- * Uses native fetch (not the PocketBase SDK) — no auth required.
+ *
+ * In development (npm run dev) requests are forwarded by Vite's dev-server proxy
+ * at /nvd-api → https://services.nvd.nist.gov, which avoids CORS restrictions.
+ * The proxy config lives in vite.config.js.
  *
  * Returns one of:
  *   { error: 'not_found' | 'rate_limited' | 'network_error' | 'malformed' }
@@ -286,7 +289,7 @@ export async function updateOrgSettings(organizationId, settings) {
  * @param {string|null} apiKey  - NVD API key; raises rate limit from 5/30s to 50/30s
  */
 export async function lookupNvd(cveId, apiKey = null) {
-  const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId)}`;
+  const url = `/nvd-api/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId.toUpperCase())}`;
   const headers = {};
   if (apiKey) headers['apiKey'] = apiKey;
 
