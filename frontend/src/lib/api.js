@@ -71,6 +71,8 @@ export async function createVulnerability(vuln, organizationId) {
     affectedAssetCount:  vuln.affectedAssetCount,
     compositeScore:      vuln.compositeScore,
     riskTier:            vuln.riskTier?.tier ?? vuln.riskTier ?? '',
+    epssScore:           vuln.epssScore      ?? null,
+    epssPercentile:      vuln.epssPercentile ?? null,
     organization:        effectiveOrgId,
   };
   // requestKey: null disables auto-cancellation so parallel creates (bulk CSV import) all complete
@@ -109,6 +111,8 @@ export async function updateVulnerability(id, vuln, organizationId) {
     affectedAssetCount:  vuln.affectedAssetCount,
     compositeScore:      vuln.compositeScore,
     riskTier:            vuln.riskTier?.tier ?? vuln.riskTier ?? '',
+    epssScore:           vuln.epssScore      ?? null,
+    epssPercentile:      vuln.epssPercentile ?? null,
     organization:        effectiveOrgId,
     group:               vuln.group       || null,
     assigned_to:         vuln.assignedTo  || null,
@@ -422,6 +426,8 @@ function mapRecord(record) {
     affectedAssetCount: record.affectedAssetCount  ?? 1,
     compositeScore:     record.compositeScore      ?? 0,
     riskTier:           record.riskTier            ?? 'Low',
+    epssScore:          record.epssScore           ?? null,
+    epssPercentile:     record.epssPercentile      ?? null,
     status:             record.status              ?? 'open',
     group:              record.group               ?? '',
     groupName:          record.expand?.group?.name        ?? '',

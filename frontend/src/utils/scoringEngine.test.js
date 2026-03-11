@@ -302,6 +302,26 @@ describe('scoreVulnerability', () => {
     const result = scoreVulnerability(vuln, highCvssWeights);
     expect(result.compositeScore).toBe(75); // normalizeCvss(7.5)=75
   });
+
+  it('passes through epssScore when present', () => {
+    const result = scoreVulnerability({ ...vuln, epssScore: 0.9432 });
+    expect(result.epssScore).toBe(0.9432);
+  });
+
+  it('passes through epssPercentile when present', () => {
+    const result = scoreVulnerability({ ...vuln, epssPercentile: 0.9712 });
+    expect(result.epssPercentile).toBe(0.9712);
+  });
+
+  it('returns null for epssScore when field is absent', () => {
+    const result = scoreVulnerability(vuln);
+    expect(result.epssScore).toBeNull();
+  });
+
+  it('returns null for epssPercentile when field is absent', () => {
+    const result = scoreVulnerability(vuln);
+    expect(result.epssPercentile).toBeNull();
+  });
 });
 
 // ─── redistributeWeights ─────────────────────────────────────────────────────

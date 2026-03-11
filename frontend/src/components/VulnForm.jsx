@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { lookupNvd } from '../lib/api.js';
+import { formatEpssScore, formatEpssPercentile } from '../utils/epssUtils.js';
 
 const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
 const MAX_DAYS = 36500;
@@ -280,6 +281,24 @@ export default function VulnForm({ onAdd, nvdApiKey = '' }) {
               <option value="PoC Exists">PoC Exists</option>
               <option value="Actively Exploited">Actively Exploited</option>
             </select>
+          </div>
+        </div>
+
+        {/* Row 2b: EPSS Score + EPSS Percentile (read-only, populated via CVE lookup in v0.7.2) */}
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <p className={labelClass}>EPSS Score</p>
+            <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+              {formatEpssScore(null)}
+            </p>
+            <p className="mt-1 text-xs text-gray-400">Populated automatically via CVE lookup</p>
+          </div>
+          <div>
+            <p className={labelClass}>EPSS Percentile</p>
+            <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+              {formatEpssPercentile(null)}
+            </p>
+            <p className="mt-1 text-xs text-gray-400">Populated automatically via CVE lookup</p>
           </div>
         </div>
 

@@ -9,6 +9,7 @@ const COLUMNS = [
   { key: 'cveId',              label: 'CVE ID',          align: 'left'   },
   { key: 'title',              label: 'Title',           align: 'left'   },
   { key: 'cvssScore',          label: 'CVSS',            align: 'center' },
+  { key: 'epssScore',          label: 'EPSS',            align: 'center' },
   { key: 'assetCriticality',   label: 'Criticality',     align: 'left'   },
   { key: 'exploitability',     label: 'Exploitability',  align: 'left'   },
   { key: 'internetFacing',     label: 'Internet',        align: 'center' },
@@ -352,6 +353,11 @@ function VulnRow({ vuln, rank, onDelete, onEdit }) {
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-center">
         <CvssChip score={vuln.cvssScore ?? 0} />
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-center text-gray-700 text-xs">
+        {vuln.epssScore !== null && vuln.epssScore !== undefined
+          ? `${(vuln.epssScore * 100).toFixed(1)}%`
+          : '—'}
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <CriticalityBadge value={vuln.assetCriticality} />

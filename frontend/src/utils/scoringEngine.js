@@ -251,5 +251,11 @@ export function getRiskTier(score) {
 export function scoreVulnerability(vuln, weights = DEFAULT_WEIGHTS) {
   const compositeScore = calculateCompositeScore(vuln, weights);
   const riskTier = getRiskTier(compositeScore);
-  return { ...vuln, compositeScore, riskTier };
+  return {
+    ...vuln,
+    compositeScore,
+    riskTier,
+    epssScore:      vuln.epssScore      ?? null,
+    epssPercentile: vuln.epssPercentile ?? null,
+  };
 }
