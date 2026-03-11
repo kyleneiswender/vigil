@@ -6,6 +6,7 @@ import {
   normalizeExploitability,
   normalizeDays,
   normalizeAffectedAssetCount,
+  normalizeEpss,
   calculateCompositeScore,
   getRiskTier,
   scoreVulnerability,
@@ -115,6 +116,19 @@ describe('normalizeAffectedAssetCount', () => {
   });
 });
 
+// ─── normalizeEpss ────────────────────────────────────────────────────────────
+
+describe('normalizeEpss', () => {
+  it('score 0 → 0',                () => expect(normalizeEpss(0)).toBe(0));
+  it('score 1 → 100',              () => expect(normalizeEpss(1)).toBe(100));
+  it('score 0.5 → 50',             () => expect(normalizeEpss(0.5)).toBe(50));
+  it('null → 0 (no data fallback)', () => expect(normalizeEpss(null)).toBe(0));
+  it('undefined → 0',              () => expect(normalizeEpss(undefined)).toBe(0));
+  it('NaN → 0',                    () => expect(normalizeEpss(NaN)).toBe(0));
+  it('negative value → 0 (clamped to 0)', () => expect(normalizeEpss(-0.5)).toBe(0));
+  it('value above 1 → 100 (clamped to 1)', () => expect(normalizeEpss(1.5)).toBe(100));
+});
+
 // ─── getRiskTier ──────────────────────────────────────────────────────────────
 
 describe('getRiskTier', () => {
@@ -176,18 +190,20 @@ describe('calculateCompositeScore', () => {
       exploitability: 'Actively Exploited',
       daysSinceDiscovery: 365,
       affectedAssetCount: 1000,
+      epssScore: 1,
     };
     expect(calculateCompositeScore(allMax)).toBe(100);
   });
 
-  it('known input produces correct score (26.3)', () => {
-    // criticality:    normalizeAssetCriticality('Medium')=50,  weight 25% → 12.5
-    // assetCount:     normalizeAffectedAssetCount(0)=0,         weight 20% →  0
-    // cvss:           normalizeCvss(5.0)=50,                    weight 20% → 10
+  it('known input produces correct score (25.0)', () => {
+    // criticality:    normalizeAssetCriticality('Medium')=50,   weight 25% → 12.5
+    // cvss:           normalizeCvss(5.0)=50,                    weight 20% → 10.0
+    // assetCount:     normalizeAffectedAssetCount(0)=0,         weight 15% →  0
     // exposure:       normalizeInternetExposure(false)=0,       weight 15% →  0
-    // exploitability: normalizeExploitability('Theoretical')=25, weight 15% →  3.75
+    // exploitability: normalizeExploitability('Theoretical')=25, weight 10% →  2.5
+    // epss:           normalizeEpss(null)=0,                    weight 10% →  0
     // days:           normalizeDays(0)=0,                       weight  5% →  0
-    // total = 26.25 → rounded 1dp = 26.3
+    // total = 25.0 → rounded 1dp = 25.0
     const score = calculateCompositeScore({
       cvssScore: 5.0,
       assetCriticality: 'Medium',
@@ -195,13 +211,14 @@ describe('calculateCompositeScore', () => {
       exploitability: 'Theoretical',
       daysSinceDiscovery: 0,
       affectedAssetCount: 0,
+      epssScore: null,
     });
-    expect(score).toBe(26.3);
+    expect(score).toBe(25.0);
   });
 
   it('100% weight on CVSS yields normalizeCvss result', () => {
     const cvssOnlyWeights = {
-      criticality: 0, assetCount: 0, cvss: 100, exposure: 0, exploitability: 0, days: 0,
+      criticality: 0, assetCount: 0, cvss: 100, exposure: 0, exploitability: 0, epss: 0, days: 0,
     };
     expect(calculateCompositeScore({ ...baseVuln, cvssScore: 5 }, cvssOnlyWeights)).toBe(50);
     expect(calculateCompositeScore({ ...baseVuln, cvssScore: 10 }, cvssOnlyWeights)).toBe(100);
@@ -298,7 +315,7 @@ describe('scoreVulnerability', () => {
   });
 
   it('accepts custom weights and re-scores accordingly', () => {
-    const highCvssWeights = { criticality: 0, assetCount: 0, cvss: 100, exposure: 0, exploitability: 0, days: 0 };
+    const highCvssWeights = { criticality: 0, assetCount: 0, cvss: 100, exposure: 0, exploitability: 0, epss: 0, days: 0 };
     const result = scoreVulnerability(vuln, highCvssWeights);
     expect(result.compositeScore).toBe(75); // normalizeCvss(7.5)=75
   });
@@ -390,5 +407,58 @@ describe('redistributeWeights', () => {
     const result = redistributeWeights(DEFAULT_WEIGHTS, 'cvss', 33.7);
     expect(Number.isInteger(result.cvss)).toBe(true);
     expect(result.cvss).toBe(34); // Math.round(33.7)
+  });
+});
+
+// ─── DEFAULT_WEIGHTS integrity ────────────────────────────────────────────────
+
+describe('DEFAULT_WEIGHTS', () => {
+  it('sums to exactly 100', () => {
+    const sum = Object.values(DEFAULT_WEIGHTS).reduce((a, b) => a + b, 0);
+    expect(sum).toBe(100);
+  });
+
+  it('includes the epss key', () => {
+    expect(DEFAULT_WEIGHTS).toHaveProperty('epss');
+  });
+});
+
+// ─── calculateCompositeScore with EPSS ───────────────────────────────────────
+
+describe('calculateCompositeScore — EPSS integration', () => {
+  const baseVulnNoEpss = {
+    cvssScore: 5.0,
+    assetCriticality: 'Medium',
+    internetFacing: false,
+    exploitability: 'Theoretical',
+    daysSinceDiscovery: 0,
+    affectedAssetCount: 0,
+  };
+
+  it('EPSS score of 0.5 contributes 5 points at 10% weight (total 30.0)', () => {
+    // criticality: 50*0.25=12.5, cvss: 50*0.20=10, exploitability: 25*0.10=2.5
+    // epss: normalizeEpss(0.5)=50, 50*0.10=5.0 → total = 30.0
+    const score = calculateCompositeScore({ ...baseVulnNoEpss, epssScore: 0.5 });
+    expect(score).toBe(30.0);
+  });
+
+  it('null epssScore → EPSS contributes 0; score matches known input (25.0)', () => {
+    // normalizeEpss(null)=0 — no penalty for missing EPSS data
+    const score = calculateCompositeScore({ ...baseVulnNoEpss, epssScore: null });
+    expect(score).toBe(25.0);
+  });
+
+  it('undefined epssScore → EPSS contributes 0 (same as null)', () => {
+    const scoreNull      = calculateCompositeScore({ ...baseVulnNoEpss, epssScore: null });
+    const scoreUndefined = calculateCompositeScore({ ...baseVulnNoEpss });
+    expect(scoreUndefined).toBe(scoreNull);
+  });
+
+  it('weights not summing to 100 produce a finite non-NaN score', () => {
+    const unbalanced = { criticality: 0, assetCount: 0, cvss: 50, exposure: 0, exploitability: 0, epss: 0, days: 0 };
+    const score = calculateCompositeScore({ ...baseVulnNoEpss, cvssScore: 10 }, unbalanced);
+    expect(score).not.toBeNaN();
+    expect(Number.isFinite(score)).toBe(true);
+    expect(score).toBe(50); // 100 * (50/100) = 50
   });
 });

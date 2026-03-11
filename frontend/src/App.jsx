@@ -88,6 +88,7 @@ export default function App() {
             assetCount:     weightsRecord.assetCount,
             exposure:       weightsRecord.exposure,
             exploitability: weightsRecord.exploitability,
+            epss:           weightsRecord.epss ?? 10,
             days:           weightsRecord.days,
           }
         : { ...DEFAULT_WEIGHTS };
@@ -257,7 +258,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.7.2 &mdash; EPSS lookup</p>
+                <p className="text-xs text-gray-500">v0.7.3 &mdash; EPSS scoring</p>
               </div>
             </div>
 
@@ -324,10 +325,11 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-blue-700">
             <span className="font-semibold">Score weights:</span>
             <span>Criticality {weights.criticality}%</span>
-            <span>Asset Count {weights.assetCount}%</span>
             <span>CVSS {weights.cvss}%</span>
+            <span>Asset Count {weights.assetCount}%</span>
             <span>Exposure {weights.exposure}%</span>
             <span>Exploitability {weights.exploitability}%</span>
+            <span>EPSS {weights.epss}%</span>
             <span>Age {weights.days}%</span>
             <span className="ml-auto flex items-center gap-3 font-medium">
               <Pill color="bg-red-600 text-white">Critical 80–100</Pill>

@@ -3,10 +3,11 @@
  *
  * Default composite risk score weights (integer percentages summing to 100):
  *   Asset Criticality:    25%
- *   Affected Asset Count: 20%  (log10 scale, ceiling = 1000 hosts)
  *   CVSS Base Score:      20%
+ *   Affected Asset Count: 15%  (log10 scale, ceiling = 1000 hosts)
  *   Internet Exposure:    15%
- *   Exploitability:       15%
+ *   Exploitability:       10%
+ *   EPSS Score:           10%  (0–1 probability → 0–100)
  *   Days Since Discovery:  5%
  *
  * Each factor is normalized to 0–100 before weights are applied.
@@ -25,26 +26,28 @@
  */
 export const DEFAULT_WEIGHTS = {
   criticality:   25,
-  assetCount:    20,
   cvss:          20,
+  assetCount:    15,
   exposure:      15,
-  exploitability: 15,
+  exploitability: 10,
+  epss:          10,
   days:           5,
 };
 
 /** Human-readable labels for each weight key, used in WeightConfig and PDF export. */
 export const WEIGHT_LABELS = {
   criticality:   'Asset Criticality',
-  assetCount:    'Affected Asset Count',
   cvss:          'CVSS v3 Base Score',
+  assetCount:    'Affected Asset Count',
   exposure:      'Internet Exposure',
   exploitability: 'Exploitability',
+  epss:          'EPSS Score',
   days:          'Days Since Discovery',
 };
 
 /**
  * Adjust one weight slider and proportionally redistribute the difference
- * across the remaining five so the total always equals 100.
+ * across the remaining factors so the total always equals 100.
  *
  * Uses largest-remainder (Hare) rounding to prevent integer drift.
  *
@@ -159,6 +162,21 @@ export function normalizeAffectedAssetCount(count) {
   return Math.min(Math.log10(val + 1) / LOG10_CEILING, 1) * 100;
 }
 
+/**
+ * Normalize EPSS score (0–1 probability) → 0–100.
+ * Null or undefined (no EPSS data) returns 0 — absence of data is not penalized
+ * in other factors; the EPSS component simply contributes nothing.
+ *
+ * @param {number|null|undefined} epssScore - EPSS exploitation probability
+ * @returns {number} Normalized score 0–100
+ */
+export function normalizeEpss(epssScore) {
+  if (epssScore === null || epssScore === undefined) return 0;
+  const val = parseFloat(epssScore);
+  if (isNaN(val)) return 0;
+  return Math.min(Math.max(val, 0), 1) * 100;
+}
+
 // --- Composite score ---
 
 /**
@@ -171,6 +189,7 @@ export function normalizeAffectedAssetCount(count) {
  * @param {string} vuln.exploitability       - 'Theoretical' | 'PoC Exists' | 'Actively Exploited'
  * @param {number} vuln.daysSinceDiscovery   - Number of days since discovery
  * @param {number} vuln.affectedAssetCount   - Number of affected hosts/assets
+ * @param {number|null} vuln.epssScore       - EPSS score 0–1, or null if unavailable
  * @param {object} [weights]                 - Integer weight map (default: DEFAULT_WEIGHTS)
  * @returns {number} Composite score rounded to one decimal place
  */
@@ -182,15 +201,17 @@ export function calculateCompositeScore(vuln, weights = DEFAULT_WEIGHTS) {
     exposure:      normalizeInternetExposure(vuln.internetFacing),
     exploitability: normalizeExploitability(vuln.exploitability),
     days:          normalizeDays(vuln.daysSinceDiscovery),
+    epss:          normalizeEpss(vuln.epssScore),
   };
 
   const composite =
-    scores.criticality   * (weights.criticality   / 100) +
-    scores.assetCount    * (weights.assetCount    / 100) +
-    scores.cvss          * (weights.cvss          / 100) +
-    scores.exposure      * (weights.exposure      / 100) +
+    scores.criticality    * (weights.criticality    / 100) +
+    scores.assetCount     * (weights.assetCount     / 100) +
+    scores.cvss           * (weights.cvss           / 100) +
+    scores.exposure       * (weights.exposure       / 100) +
     scores.exploitability * (weights.exploitability / 100) +
-    scores.days          * (weights.days          / 100);
+    scores.epss           * (weights.epss           / 100) +
+    scores.days           * (weights.days           / 100);
 
   return Math.round(composite * 10) / 10;
 }

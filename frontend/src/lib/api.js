@@ -381,7 +381,7 @@ export async function fetchScoringWeights(organizationId) {
  * Upsert the scoring weights for an organization.
  * Creates the record if it doesn't exist, updates it if it does.
  * @param {string} organizationId
- * @param {object} weights  - { cvss, criticality, assetCount, exposure, exploitability, days }
+ * @param {object} weights  - { cvss, criticality, assetCount, exposure, exploitability, epss, days }
  * @returns {Promise<object>} the saved PocketBase record
  */
 export async function updateScoringWeights(organizationId, weights) {
@@ -394,6 +394,7 @@ export async function updateScoringWeights(organizationId, weights) {
     assetCount:    weights.assetCount,
     exposure:      weights.exposure,
     exploitability: weights.exploitability,
+    epss:          weights.epss,
     days:          weights.days,
   };
 
