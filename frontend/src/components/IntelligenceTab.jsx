@@ -71,6 +71,8 @@ function ArticleCard({ article, onClick, isRead }) {
  *   userId: string,
  *   readArticleUrls: Set<string>,
  *   onArticleRead: (url: string) => void,
+ *   trackedCveIds: string[],
+ *   onAddCve: (cveId: string) => void,
  * }} props
  */
 export default function IntelligenceTab({
@@ -81,6 +83,8 @@ export default function IntelligenceTab({
   onRefresh,
   readArticleUrls = new Set(),
   onArticleRead,
+  trackedCveIds   = [],
+  onAddCve,
 }) {
   const [selectedArticle, setSelectedArticle] = useState(null);
 
@@ -176,6 +180,8 @@ export default function IntelligenceTab({
         <ArticleDetailPanel
           article={selectedArticle}
           onClose={() => setSelectedArticle(null)}
+          trackedCveIds={trackedCveIds}
+          onAddCve={onAddCve}
         />
       )}
     </main>

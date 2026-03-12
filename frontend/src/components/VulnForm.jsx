@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { lookupNvd, lookupEpss } from '../lib/api.js';
 import { formatEpssScore, formatEpssPercentile } from '../utils/epssUtils.js';
 
@@ -39,13 +39,26 @@ function Spinner() {
 
 // ─── VulnForm ─────────────────────────────────────────────────────────────────
 
-export default function VulnForm({ onAdd, nvdApiKey = '' }) {
+export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null, onPrefillConsumed }) {
   const [form,      setForm]      = useState(EMPTY_FORM);
   const [errors,    setErrors]    = useState({});
   const [nvdStatus, setNvdStatus] = useState({ status: 'idle', message: '' });
   // status: 'idle' | 'loading' | 'error' | 'warn'
   const [nvdFilled, setNvdFilled] = useState(new Set());
   // field names auto-filled by NVD; cleared when the user edits the field
+
+  // When a CVE ID is pre-filled from the Intelligence tab, populate the field
+  // and immediately trigger a lookup so the user sees results right away.
+  useEffect(() => {
+    if (!prefilledCveId) return;
+    const upper = prefilledCveId.toUpperCase();
+    setForm((prev) => ({ ...prev, cveId: upper }));
+    setNvdStatus({ status: 'idle', message: '' });
+    setNvdFilled(new Set());
+    handleNvdLookup(upper);
+    onPrefillConsumed?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefilledCveId]);
 
   function handleChange(e) {
     const { name, value, type, checked } = e.target;
@@ -61,9 +74,9 @@ export default function VulnForm({ onAdd, nvdApiKey = '' }) {
     }
   }
 
-  async function handleNvdLookup() {
+  async function handleNvdLookup(cveIdOverride = null) {
     setNvdStatus({ status: 'loading', message: '' });
-    const cveId = form.cveId.trim();
+    const cveId = (cveIdOverride ?? form.cveId).trim().toUpperCase();
 
     const [nvdSettled, epssSettled] = await Promise.allSettled([
       lookupNvd(cveId, nvdApiKey || null),

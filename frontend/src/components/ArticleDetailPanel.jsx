@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
-import { sanitizeHtml } from '../utils/rssParser.js';
-import { formatDate }    from '../utils/exportUtils.js';
+import { sanitizeHtml }                  from '../utils/rssParser.js';
+import { formatDate }                    from '../utils/exportUtils.js';
+import { injectCveActions }              from '../utils/cveDetector.js';
 
 // ─── Scoped typography styles ─────────────────────────────────────────────────
 // Applied only inside [data-article-body] so they don't leak to the rest of
@@ -48,6 +49,18 @@ const ARTICLE_STYLES = `
   [data-article-body] hr {
     border: none; border-top: 1px solid #e5e7eb; margin: 1rem 0;
   }
+  [data-article-body] .cve-mention { display: inline; white-space: nowrap; }
+  [data-article-body] .cve-badge {
+    display: inline-flex; align-items: center; margin-left: 0.2rem;
+    padding: 0.05rem 0.35rem; border-radius: 0.25rem;
+    font-size: 0.68rem; font-weight: 600; vertical-align: middle;
+    background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+    cursor: pointer; transition: background 0.15s; line-height: 1.4;
+  }
+  [data-article-body] .cve-badge:hover:not(:disabled) { background: #dbeafe; }
+  [data-article-body] .cve-badge--tracked {
+    background: #f0fdf4; color: #15803d; border-color: #bbf7d0; cursor: default;
+  }
 `;
 
 function XIcon() {
@@ -64,9 +77,9 @@ function XIcon() {
  * Content priority: fullContent (content:encoded / Atom <content>) → description.
  * All HTML is sanitized before rendering.
  *
- * @param {{ article: object, onClose: () => void }} props
+ * @param {{ article: object, onClose: () => void, trackedCveIds?: string[], onAddCve?: (cveId: string) => void }} props
  */
-export default function ArticleDetailPanel({ article, onClose }) {
+export default function ArticleDetailPanel({ article, onClose, trackedCveIds = [], onAddCve }) {
   // Close on Escape
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
@@ -77,7 +90,14 @@ export default function ArticleDetailPanel({ article, onClose }) {
   const dateStr    = article.pubDate ? formatDate(article.pubDate) : null;
   const rawHtml    = article.fullContent || article.description || '';
   const safeHtml   = sanitizeHtml(rawHtml);
+  const enrichedHtml = injectCveActions(safeHtml, trackedCveIds);
   const hasContent = safeHtml.trim().length > 0;
+
+  function handleBodyClick(e) {
+    const btn = e.target.closest('[data-cve-id]');
+    if (!btn || btn.disabled) return;
+    onAddCve?.(btn.dataset.cveId);
+  }
 
   return (
     <>
@@ -126,7 +146,8 @@ export default function ArticleDetailPanel({ article, onClose }) {
           {hasContent ? (
             <div
               data-article-body
-              dangerouslySetInnerHTML={{ __html: safeHtml }}
+              onClick={handleBodyClick}
+              dangerouslySetInnerHTML={{ __html: enrichedHtml }}
             />
           ) : (
             <p className="text-sm text-gray-400 italic">

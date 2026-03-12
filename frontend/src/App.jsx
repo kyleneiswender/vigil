@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import VulnForm             from './components/VulnForm';
 import VulnTable            from './components/VulnTable';
 import VulnEditPanel        from './components/VulnEditPanel';
@@ -66,6 +66,12 @@ export default function App() {
   const [feedsLoading,       setFeedsLoading]       = useState(false);
   const [feedErrors,         setFeedErrors]         = useState({});
   const [readArticleUrls,    setReadArticleUrls]    = useState(new Set());
+  const [prefilledCveId,     setPrefilledCveId]     = useState(null);
+
+  const trackedCveIds = useMemo(
+    () => vulnerabilities.map((v) => v.cveId).filter(Boolean),
+    [vulnerabilities],
+  );
 
   const feedArticlesRef     = useRef([]);
   const feedsAutoFetchedRef = useRef(false);
@@ -386,6 +392,11 @@ export default function App() {
     setReadArticleUrls((prev) => new Set([...prev, url]));
   }
 
+  const handleAddCveFromFeed = useCallback((cveId) => {
+    setActiveTab('vulnerabilities');
+    setPrefilledCveId(cveId);
+  }, []);
+
   function handleLogout() {
     logout();
     organizationIdRef.current  = null;
@@ -467,7 +478,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.8.2 &mdash; Feed persistence and read tracking</p>
+                <p className="text-xs text-gray-500">v0.8.3 &mdash; CVE auto-detection in feeds</p>
               </div>
             </div>
 
@@ -570,7 +581,7 @@ export default function App() {
       {activeTab === 'vulnerabilities' && (
         <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
           <CsvImport    onImport={handleImport} />
-          <VulnForm     onAdd={handleAdd} nvdApiKey={orgSettings?.nvd_api_key ?? ''} />
+          <VulnForm     onAdd={handleAdd} nvdApiKey={orgSettings?.nvd_api_key ?? ''} prefilledCveId={prefilledCveId} onPrefillConsumed={() => setPrefilledCveId(null)} />
           <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
           <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} onEdit={(vuln) => setEditingVuln(vuln)} weights={weights} />
         </main>
@@ -585,6 +596,8 @@ export default function App() {
           userId={user?.id}
           readArticleUrls={readArticleUrls}
           onArticleRead={handleArticleRead}
+          trackedCveIds={trackedCveIds}
+          onAddCve={handleAddCveFromFeed}
         />
       )}
 
