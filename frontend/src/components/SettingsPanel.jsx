@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchOrgSettings, updateOrgSettings } from '../lib/api.js';
+import { formatDate } from '../utils/exportUtils.js';
 
 const labelClass = 'block text-sm font-medium text-gray-700 mb-1';
 const inputClass =
@@ -70,7 +71,10 @@ function formatKevSyncTime(isoString) {
   return `${mm}/${dd}/${yyyy} ${hh}:${min}`;
 }
 
-export default function SettingsPanel({ organizationId, currentUser, onClose, onSettingsSaved, onSyncKev }) {
+export default function SettingsPanel({
+  organizationId, currentUser, onClose, onSettingsSaved, onSyncKev,
+  feeds = [], onAddFeed, onDeleteFeed, onToggleFeed,
+}) {
   const [nvdKey,      setNvdKey]      = useState('');
   const [showKey,     setShowKey]     = useState(false);
   const [loading,     setLoading]     = useState(true);
@@ -78,10 +82,56 @@ export default function SettingsPanel({ organizationId, currentUser, onClose, on
   const [error,       setError]       = useState('');
   const [successMsg,  setSuccessMsg]  = useState('');
   const [lastKevSync, setLastKevSync] = useState(null);
-  const [kevSyncing,  setKevSyncing]  = useState(false);
-  const [kevResult,   setKevResult]   = useState(null);
+  const [kevSyncing,    setKevSyncing]    = useState(false);
+  const [kevResult,     setKevResult]     = useState(null);
+
+  // ── Feed management state (admin only) ─────────────────────────────────────
+  const [addingFeed,     setAddingFeed]     = useState(false);
+  const [newFeedName,    setNewFeedName]    = useState('');
+  const [newFeedUrl,     setNewFeedUrl]     = useState('');
+  const [addFeedError,   setAddFeedError]   = useState('');
+  const [addFeedBusy,    setAddFeedBusy]    = useState(false);
+  const [deletingFeedId, setDeletingFeedId] = useState(null);
 
   const isAdmin = currentUser?.role === 'admin';
+
+  function isValidFeedUrl(url) {
+    return url.startsWith('http://') || url.startsWith('https://');
+  }
+
+  async function handleAddFeed() {
+    if (!newFeedName.trim())           { setAddFeedError('Name is required.'); return; }
+    if (!isValidFeedUrl(newFeedUrl.trim())) { setAddFeedError('URL must start with http:// or https://.'); return; }
+    setAddFeedBusy(true);
+    setAddFeedError('');
+    try {
+      await onAddFeed(newFeedName.trim(), newFeedUrl.trim());
+      setNewFeedName('');
+      setNewFeedUrl('');
+      setAddingFeed(false);
+    } catch (e) {
+      setAddFeedError('Failed to add feed: ' + (e?.message ?? 'unknown error'));
+    } finally {
+      setAddFeedBusy(false);
+    }
+  }
+
+  async function handleDeleteFeed(feedId) {
+    try {
+      await onDeleteFeed(feedId);
+      setDeletingFeedId(null);
+    } catch (e) {
+      setError('Failed to delete feed: ' + (e?.message ?? 'unknown error'));
+    }
+  }
+
+  async function handleToggleFeed(feedId, enabled) {
+    try {
+      await onToggleFeed(feedId, enabled);
+    } catch (e) {
+      setError('Failed to update feed: ' + (e?.message ?? 'unknown error'));
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -286,6 +336,149 @@ export default function SettingsPanel({ organizationId, currentUser, onClose, on
               )}
             </div>
           </SettingsSection>
+
+          {/* ── Feed Management (admin only) ── */}
+          {isAdmin && (
+            <SettingsSection
+              title="Feed Management"
+              description="Configure RSS/Atom feeds shown in the Intelligence tab. Changes take effect on the next refresh."
+            >
+              {/* Feed list */}
+              {feeds.length === 0 ? (
+                <p className="text-sm text-gray-400">No feeds configured.</p>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {feeds.map((feed) => (
+                    <li key={feed.id} className="py-3">
+                      {deletingFeedId === feed.id ? (
+                        /* Confirm delete row */
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm text-gray-700 flex-1">
+                            Delete <span className="font-medium">{feed.name}</span>? This cannot be undone.
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteFeed(feed.id)}
+                            className="rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700 transition-colors"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingFeedId(null)}
+                            className="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-3">
+                          {/* Enabled toggle */}
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={feed.enabled}
+                            onClick={() => handleToggleFeed(feed.id, !feed.enabled)}
+                            className={`mt-0.5 relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent
+                                        transition-colors duration-200 focus:outline-none
+                                        ${feed.enabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+                          >
+                            <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow
+                                             transform transition-transform duration-200
+                                             ${feed.enabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                          </button>
+
+                          {/* Feed info */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800">{feed.name}</p>
+                            <p className="text-xs text-gray-400 truncate">{feed.url}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {feed.lastFetched
+                                ? <>Last fetched: {formatDate(feed.lastFetched)}
+                                    {feed.lastFetchedStatus === 'error' &&
+                                      <span className="ml-1 text-red-500">(error)</span>}
+                                  </>
+                                : 'Never fetched'}
+                            </p>
+                          </div>
+
+                          {/* Delete */}
+                          <button
+                            type="button"
+                            onClick={() => setDeletingFeedId(feed.id)}
+                            className="shrink-0 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600
+                                       hover:bg-red-50 hover:border-red-300 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Add Feed */}
+              {addingFeed ? (
+                <div className="rounded-md border border-gray-200 p-4 space-y-3 mt-2">
+                  <div>
+                    <label className={labelClass}>Feed Name</label>
+                    <input
+                      type="text"
+                      value={newFeedName}
+                      onChange={(e) => setNewFeedName(e.target.value)}
+                      placeholder="e.g. CISA Alerts"
+                      className={inputClass}
+                      disabled={addFeedBusy}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Feed URL</label>
+                    <input
+                      type="url"
+                      value={newFeedUrl}
+                      onChange={(e) => setNewFeedUrl(e.target.value)}
+                      placeholder="https://example.com/feed.xml"
+                      className={inputClass}
+                      disabled={addFeedBusy}
+                    />
+                  </div>
+                  {addFeedError && (
+                    <p className="text-xs text-red-600">{addFeedError}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAddFeed}
+                      disabled={addFeedBusy}
+                      className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white
+                                 hover:bg-blue-700 transition-colors disabled:opacity-50"
+                    >
+                      {addFeedBusy ? 'Adding…' : 'Add Feed'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setAddingFeed(false); setNewFeedName(''); setNewFeedUrl(''); setAddFeedError(''); }}
+                      disabled={addFeedBusy}
+                      className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700
+                                 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setAddingFeed(true)}
+                  className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700
+                             hover:bg-gray-50 transition-colors"
+                >
+                  + Add Feed
+                </button>
+              )}
+            </SettingsSection>
+          )}
           </>
         )}
       </div>

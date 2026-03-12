@@ -7,6 +7,7 @@ import WeightConfig         from './components/WeightConfig';
 import Auth                 from './components/Auth';
 import UserManagementPanel  from './components/UserManagementPanel';
 import SettingsPanel        from './components/SettingsPanel';
+import IntelligenceTab      from './components/IntelligenceTab';
 import { pb, isAuthenticated, getCurrentUser, logout } from './lib/pocketbase.js';
 import {
   initializeUser,
@@ -17,9 +18,21 @@ import {
   updateScoringWeights,
   updateVulnerability,
   fetchOrgSettings,
+  updateOrgSettings,
   syncKevFeed,
+  fetchRssFeeds,
+  createRssFeed,
+  updateRssFeed,
+  deleteRssFeed,
 } from './lib/api.js';
 import { scoreVulnerability, DEFAULT_WEIGHTS } from './utils/scoringEngine';
+
+const DEFAULT_FEEDS = [
+  { name: 'CISA Cyber Alerts',   url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml'},
+  { name: 'CISA News', url: 'https://www.cisa.gov/news.xml'},
+  { name: 'SANS Internet Storm', url: 'https://isc.sans.edu/rssfeed_full.xml' },
+  { name: 'Krebs on Security',   url: 'https://krebsonsecurity.com/feed/'     },
+];
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -35,6 +48,8 @@ export default function App() {
   const [showUserMgmt,    setShowUserMgmt]    = useState(false);
   const [showSettings,    setShowSettings]    = useState(false);
   const [orgSettings,     setOrgSettings]     = useState(null);
+  const [rssFeeds,        setRssFeeds]        = useState([]);
+  const [activeTab,       setActiveTab]       = useState('vulnerabilities');
 
   // ── Re-check auth on authStore changes (e.g. token expiry) ─────────────────
   useEffect(() => {
@@ -74,13 +89,15 @@ export default function App() {
       }
       organizationIdRef.current = orgId;
 
-      const [records, weightsRecord, settingsRecord] = await Promise.all([
+      const [records, weightsRecord, settingsRecord, feedsData] = await Promise.all([
         fetchVulnerabilities(orgId),
         fetchScoringWeights(orgId),
         fetchOrgSettings(orgId),
+        fetchRssFeeds(orgId),
       ]);
 
       setOrgSettings(settingsRecord);
+      setRssFeeds(feedsData);
 
       const resolvedWeights = weightsRecord
         ? {
@@ -112,6 +129,17 @@ export default function App() {
             }
           })
           .catch(() => {}); // silent background failure — non-blocking
+      }
+
+      // Seed three default RSS feeds once if not already done
+      if (!settingsRecord?.defaultFeedsSeeded && feedsData.length === 0) {
+        Promise.all(DEFAULT_FEEDS.map((f) => createRssFeed(orgId, f.name, f.url)))
+          .then((newFeeds) => {
+            setRssFeeds(newFeeds);
+            return updateOrgSettings(orgId, { defaultFeedsSeeded: true });
+          })
+          .then(() => setOrgSettings((prev) => ({ ...prev, defaultFeedsSeeded: true })))
+          .catch(() => {}); // non-blocking
       }
     } catch (err) {
       console.error('[loadData] error:', err);
@@ -234,12 +262,34 @@ export default function App() {
     return result;
   }
 
+  async function handleAddFeed(name, url) {
+    const feed = await createRssFeed(organizationIdRef.current, name, url);
+    setRssFeeds((prev) => [...prev, feed]);
+    return feed;
+  }
+
+  async function handleDeleteFeed(feedId) {
+    await deleteRssFeed(feedId);
+    setRssFeeds((prev) => prev.filter((f) => f.id !== feedId));
+  }
+
+  async function handleToggleFeed(feedId, enabled) {
+    await updateRssFeed(feedId, { enabled });
+    setRssFeeds((prev) => prev.map((f) => f.id === feedId ? { ...f, enabled } : f));
+  }
+
+  function handleFeedMetaUpdated(feedId, updates) {
+    setRssFeeds((prev) => prev.map((f) => f.id === feedId ? { ...f, ...updates } : f));
+  }
+
   function handleLogout() {
     logout();
     organizationIdRef.current = null;
     setVulnerabilities([]);
     setWeights({ ...DEFAULT_WEIGHTS });
     setOrgSettings(null);
+    setRssFeeds([]);
+    setActiveTab('vulnerabilities');
     setLoadFailed(false);
     setError('');
   }
@@ -306,7 +356,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.8.0 &mdash; CISA KEV integration</p>
+                <p className="text-xs text-gray-500">v0.8.1 &mdash; Intelligence feed</p>
               </div>
             </div>
 
@@ -367,35 +417,56 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Tier / weight legend ── */}
-      <div className="bg-blue-50 border-b border-blue-100">
-        <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6 lg:px-8">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-blue-700">
-            <span className="font-semibold">Score weights:</span>
-            <span>Criticality {weights.criticality}%</span>
-            <span>CVSS {weights.cvss}%</span>
-            <span>Asset Count {weights.assetCount}%</span>
-            <span>Exposure {weights.exposure}%</span>
-            <span>Exploitability {weights.exploitability}%</span>
-            <span>EPSS {weights.epss}%</span>
-            <span>Age {weights.days}%</span>
-            <span className="ml-auto flex items-center gap-3 font-medium">
-              <Pill color="bg-red-600 text-white">Critical 80–100</Pill>
-              <Pill color="bg-orange-500 text-white">High 60–79</Pill>
-              <Pill color="bg-yellow-400 text-yellow-900">Medium 40–59</Pill>
-              <Pill color="bg-green-500 text-white">Low 0–39</Pill>
-            </span>
-          </div>
+      {/* ── Tab navigation ── */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <nav className="flex gap-0" aria-label="Main navigation">
+            <TabButton active={activeTab === 'vulnerabilities'} onClick={() => setActiveTab('vulnerabilities')}>
+              Vulnerabilities
+            </TabButton>
+            <TabButton active={activeTab === 'intelligence'} onClick={() => setActiveTab('intelligence')}>
+              Intelligence
+            </TabButton>
+          </nav>
         </div>
       </div>
 
-      {/* ── Main content ── */}
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
-        <CsvImport    onImport={handleImport} />
-        <VulnForm     onAdd={handleAdd} nvdApiKey={orgSettings?.nvd_api_key ?? ''} />
-        <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
-        <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} onEdit={(vuln) => setEditingVuln(vuln)} weights={weights} />
-      </main>
+      {/* ── Tier / weight legend (Vulnerabilities tab only) ── */}
+      {activeTab === 'vulnerabilities' && (
+        <div className="bg-blue-50 border-b border-blue-100">
+          <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6 lg:px-8">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-blue-700">
+              <span className="font-semibold">Score weights:</span>
+              <span>Criticality {weights.criticality}%</span>
+              <span>CVSS {weights.cvss}%</span>
+              <span>Asset Count {weights.assetCount}%</span>
+              <span>Exposure {weights.exposure}%</span>
+              <span>Exploitability {weights.exploitability}%</span>
+              <span>EPSS {weights.epss}%</span>
+              <span>Age {weights.days}%</span>
+              <span className="ml-auto flex items-center gap-3 font-medium">
+                <Pill color="bg-red-600 text-white">Critical 80–100</Pill>
+                <Pill color="bg-orange-500 text-white">High 60–79</Pill>
+                <Pill color="bg-yellow-400 text-yellow-900">Medium 40–59</Pill>
+                <Pill color="bg-green-500 text-white">Low 0–39</Pill>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab content ── */}
+      {activeTab === 'vulnerabilities' && (
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
+          <CsvImport    onImport={handleImport} />
+          <VulnForm     onAdd={handleAdd} nvdApiKey={orgSettings?.nvd_api_key ?? ''} />
+          <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
+          <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} onEdit={(vuln) => setEditingVuln(vuln)} weights={weights} />
+        </main>
+      )}
+      {activeTab === 'intelligence' && (
+        <IntelligenceTab feeds={rssFeeds} onFeedUpdated={handleFeedMetaUpdated} />
+      )}
 
       {editingVuln && (
         <VulnEditPanel
@@ -421,6 +492,10 @@ export default function App() {
           onClose={() => setShowSettings(false)}
           onSettingsSaved={(updated) => setOrgSettings((prev) => ({ ...prev, ...updated }))}
           onSyncKev={handleKevSync}
+          feeds={rssFeeds}
+          onAddFeed={handleAddFeed}
+          onDeleteFeed={handleDeleteFeed}
+          onToggleFeed={handleToggleFeed}
         />
       )}
     </div>
@@ -432,5 +507,21 @@ function Pill({ color, children }) {
     <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${color}`}>
       {children}
     </span>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors
+        ${active
+          ? 'border-blue-600 text-blue-600'
+          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+        }`}
+    >
+      {children}
+    </button>
   );
 }

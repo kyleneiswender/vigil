@@ -268,10 +268,11 @@ export async function fetchOrgSettings(organizationId) {
  */
 export async function updateOrgSettings(organizationId, settings) {
   const existing = await fetchOrgSettings(organizationId);
-  // Preserve the existing nvd_api_key if not provided (e.g. when only updating lastKevSync)
+  // Preserve all existing fields — only override what is explicitly provided.
   const data = {
-    organization: organizationId,
-    nvd_api_key:  settings.nvd_api_key ?? existing?.nvd_api_key ?? '',
+    organization:       organizationId,
+    nvd_api_key:        settings.nvd_api_key        ?? existing?.nvd_api_key        ?? '',
+    defaultFeedsSeeded: settings.defaultFeedsSeeded ?? existing?.defaultFeedsSeeded ?? false,
   };
   if (settings.lastKevSync !== undefined) data.lastKevSync = settings.lastKevSync;
   if (existing) return pb.collection('org_settings').update(existing.id, data);
@@ -645,5 +646,66 @@ async function _writeAccessAudit({ action, resourceType, resourceId, details, or
     }, { requestKey: null });
   } catch (err) {
     console.error('[_writeAccessAudit] audit write failed — action:', action, err);
+  }
+}
+
+// ─── RSS feeds ────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch all rss_feeds records for the given organization, sorted by
+ * displayOrder then name.
+ */
+export async function fetchRssFeeds(organizationId) {
+  return pb.collection('rss_feeds').getFullList({
+    filter:     `organization = "${organizationId}"`,
+    sort:       'displayOrder,name',
+    requestKey: null,
+  });
+}
+
+/**
+ * Create a new RSS feed record for the organization.
+ * New feeds are enabled by default.
+ */
+export async function createRssFeed(organizationId, name, url) {
+  return pb.collection('rss_feeds').create({
+    organization: organizationId,
+    name,
+    url,
+    enabled:      true,
+    displayOrder: 0,
+  }, { requestKey: null });
+}
+
+/**
+ * Update an existing RSS feed record (e.g. enabled toggle, lastFetched).
+ */
+export async function updateRssFeed(feedId, updates) {
+  return pb.collection('rss_feeds').update(feedId, updates, { requestKey: null });
+}
+
+/**
+ * Delete an RSS feed record.
+ */
+export async function deleteRssFeed(feedId) {
+  return pb.collection('rss_feeds').delete(feedId, { requestKey: null });
+}
+
+/**
+ * Fetch raw XML from an RSS/Atom feed URL via the PocketBase server-side proxy.
+ * The proxy bypasses browser CORS restrictions.
+ *
+ * @param {string} feedUrl - The RSS/Atom feed URL to fetch
+ * @returns {{ xml: string } | { error: string }}
+ */
+export async function fetchRssFeedContent(feedUrl) {
+  const proxiedUrl = `${pb.baseURL}/api/rss-proxy?url=${encodeURIComponent(feedUrl)}`;
+  try {
+    const response = await fetch(proxiedUrl);
+    if (!response.ok) return { error: 'proxy_error' };
+    const xml = await response.text();
+    return { xml };
+  } catch {
+    return { error: 'network_error' };
   }
 }
