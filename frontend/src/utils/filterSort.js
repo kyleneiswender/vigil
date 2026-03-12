@@ -13,7 +13,7 @@
  *   internetFacing: '' = all, 'yes' = internet-facing, 'no' = internal only
  * @returns {object[]}
  */
-export function filterVulns(vulns, { search, riskTier, assetCriticality, internetFacing, groupName, assignedTo }) {
+export function filterVulns(vulns, { search, riskTier, assetCriticality, internetFacing, groupName, assignedTo, kev }) {
   return vulns.filter((v) => {
     if (search) {
       const q = search.toLowerCase();
@@ -26,6 +26,8 @@ export function filterVulns(vulns, { search, riskTier, assetCriticality, interne
     if (groupName && v.groupName !== groupName) return false;
     if (assignedTo === '__unassigned__' && v.assignedToEmail) return false;
     if (assignedTo && assignedTo !== '__unassigned__' && v.assignedToEmail !== assignedTo) return false;
+    if (kev === 'kev_only' && !v.isKev) return false;
+    if (kev === 'non_kev' && v.isKev) return false;
     return true;
   });
 }

@@ -462,3 +462,39 @@ describe('calculateCompositeScore — EPSS integration', () => {
     expect(score).toBe(50); // 100 * (50/100) = 50
   });
 });
+
+// ─── calculateCompositeScore — KEV override ───────────────────────────────────
+
+describe('calculateCompositeScore — KEV exploitability override', () => {
+  // Use 100% weight on exploitability so the override effect is unambiguous.
+  const exploitOnlyWeights = { criticality: 0, assetCount: 0, cvss: 0, exposure: 0, exploitability: 100, epss: 0, days: 0 };
+
+  const lowExploitVuln = {
+    cvssScore: 5.0, assetCriticality: 'Medium', internetFacing: false,
+    exploitability: 'Theoretical', daysSinceDiscovery: 0, affectedAssetCount: 0, epssScore: null,
+  };
+
+  it('isKev=true with Theoretical exploitability scores same as Actively Exploited', () => {
+    const kevScore      = calculateCompositeScore({ ...lowExploitVuln, isKev: true  }, exploitOnlyWeights);
+    const activeScore   = calculateCompositeScore({ ...lowExploitVuln, exploitability: 'Actively Exploited' }, exploitOnlyWeights);
+    expect(kevScore).toBe(activeScore); // both → normalizeExploitability('Actively Exploited')=100
+  });
+
+  it('isKev=true with PoC Exists exploitability also scores as Actively Exploited', () => {
+    const kevScore    = calculateCompositeScore({ ...lowExploitVuln, isKev: true, exploitability: 'PoC Exists' }, exploitOnlyWeights);
+    const activeScore = calculateCompositeScore({ ...lowExploitVuln, exploitability: 'Actively Exploited' }, exploitOnlyWeights);
+    expect(kevScore).toBe(activeScore);
+  });
+
+  it('isKev=false uses the dropdown exploitability value normally (Theoretical → 25%)', () => {
+    const score = calculateCompositeScore({ ...lowExploitVuln, isKev: false }, exploitOnlyWeights);
+    // normalizeExploitability('Theoretical')=25, weight 100% → 25
+    expect(score).toBe(25);
+  });
+
+  it('isKev=undefined (absent) behaves the same as isKev=false', () => {
+    const noKev  = calculateCompositeScore({ ...lowExploitVuln }, exploitOnlyWeights);
+    const falseKev = calculateCompositeScore({ ...lowExploitVuln, isKev: false }, exploitOnlyWeights);
+    expect(noKev).toBe(falseKev);
+  });
+});

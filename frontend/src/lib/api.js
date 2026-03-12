@@ -264,14 +264,16 @@ export async function fetchOrgSettings(organizationId) {
  * Upsert the org_settings record for an organization.
  * Creates the record if it doesn't exist, updates it if it does.
  * @param {string} organizationId
- * @param {object} settings  - { nvd_api_key }
+ * @param {object} settings  - { nvd_api_key?, lastKevSync? }
  */
 export async function updateOrgSettings(organizationId, settings) {
   const existing = await fetchOrgSettings(organizationId);
+  // Preserve the existing nvd_api_key if not provided (e.g. when only updating lastKevSync)
   const data = {
     organization: organizationId,
-    nvd_api_key:  settings.nvd_api_key ?? '',
+    nvd_api_key:  settings.nvd_api_key ?? existing?.nvd_api_key ?? '',
   };
+  if (settings.lastKevSync !== undefined) data.lastKevSync = settings.lastKevSync;
   if (existing) return pb.collection('org_settings').update(existing.id, data);
   return pb.collection('org_settings').create(data);
 }
@@ -361,6 +363,110 @@ export async function lookupEpss(cveId) {
   } catch {
     return { error: 'network_error' };
   }
+}
+
+// ─── CISA KEV feed ────────────────────────────────────────────────────────────
+
+/**
+ * Fetch the CISA Known Exploited Vulnerabilities catalog.
+ * The feed is a public JSON endpoint; no authentication required.
+ *
+ * @returns {{ vulnerabilities: object[] } | { error: string }}
+ */
+export async function fetchKevCatalog() {
+  try {
+    const response = await fetch(
+      '/kev-api/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+    );
+    if (!response.ok) return { error: 'network_error' };
+    let data;
+    try {
+      data = await response.json();
+    } catch {
+      return { error: 'malformed' };
+    }
+    if (!Array.isArray(data?.vulnerabilities)) return { error: 'malformed' };
+    return { vulnerabilities: data.vulnerabilities };
+  } catch {
+    return { error: 'network_error' };
+  }
+}
+
+/**
+ * Compare the CISA KEV catalog against tracked vulnerabilities and flag matches.
+ *
+ * For each tracked vulnerability whose CVE ID appears in the catalog but has not
+ * yet been flagged (isKev !== true), this function:
+ *   1. Updates the PocketBase record: isKev=true, kevDateAdded, exploitability='Actively Exploited'
+ *   2. Writes a system_generated audit log entry
+ *
+ * Then updates lastKevSync in org_settings.
+ *
+ * @param {object[]} trackedVulnerabilities - The current vulnerabilities array (from app state)
+ * @param {string}   organizationId
+ * @returns {{ newMatches: string[], totalMatched: number, lastSync: string|null, error: string|null }}
+ */
+export async function syncKevFeed(trackedVulnerabilities, organizationId) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+
+  const catalogResult = await fetchKevCatalog();
+  if (catalogResult.error) {
+    return { newMatches: [], totalMatched: 0, lastSync: null, error: catalogResult.error };
+  }
+
+  // Build Map: uppercase cveID → catalog entry (for O(1) lookup)
+  const kevMap = new Map(
+    catalogResult.vulnerabilities.map((entry) => [entry.cveID.toUpperCase(), entry])
+  );
+
+  const newMatches = [];
+
+  for (const vuln of trackedVulnerabilities) {
+    const kevEntry = kevMap.get(vuln.cveId.toUpperCase());
+    if (!kevEntry) continue;       // not in KEV catalog
+    if (vuln.isKev) continue;      // already flagged — no double-update
+
+    const previous = {
+      isKev:          vuln.isKev         ?? false,
+      kevDateAdded:   vuln.kevDateAdded  ?? null,
+      exploitability: vuln.exploitability,
+    };
+
+    try {
+      await pb.collection('vulnerabilities').update(vuln.id, {
+        isKev:          true,
+        kevDateAdded:   kevEntry.dateAdded,
+        exploitability: 'Actively Exploited',
+      }, { requestKey: null });
+
+      await _writeVulnAudit({
+        vulnerability:   vuln.id,
+        action:          'update',
+        changedFields:   ['isKev', 'kevDateAdded', 'exploitability'],
+        previousValues:  previous,
+        newValues:       { isKev: true, kevDateAdded: kevEntry.dateAdded, exploitability: 'Actively Exploited' },
+        organizationId:  effectiveOrgId,
+        systemGenerated: true,
+      });
+
+      newMatches.push(vuln.cveId);
+    } catch (err) {
+      console.error('[syncKevFeed] failed to update vuln:', vuln.cveId, err);
+    }
+  }
+
+  const totalMatched = trackedVulnerabilities.filter(
+    (v) => kevMap.has(v.cveId.toUpperCase())
+  ).length;
+
+  const lastSync = new Date().toISOString();
+  try {
+    await updateOrgSettings(effectiveOrgId, { lastKevSync: lastSync });
+  } catch (err) {
+    console.error('[syncKevFeed] failed to update lastKevSync:', err);
+  }
+
+  return { newMatches, totalMatched, lastSync, error: null };
 }
 
 // ─── Scoring weights ──────────────────────────────────────────────────────────
@@ -458,6 +564,8 @@ function mapRecord(record) {
     riskTier:           record.riskTier            ?? 'Low',
     epssScore:          record.epssScore           ?? null,
     epssPercentile:     record.epssPercentile      ?? null,
+    isKev:              record.isKev               ?? false,
+    kevDateAdded:       record.kevDateAdded        ?? null,
     status:             record.status              ?? 'open',
     group:              record.group               ?? '',
     groupName:          record.expand?.group?.name        ?? '',
@@ -484,12 +592,14 @@ function _vulnSnapshot(record) {
     affectedAssetCount: record.affectedAssetCount,
     compositeScore:     record.compositeScore,
     riskTier:           record.riskTier,
+    isKev:              record.isKev        ?? false,
+    kevDateAdded:       record.kevDateAdded ?? null,
     group:              record.group        ?? null,
     assigned_to:        record.assigned_to  ?? null,
   };
 }
 
-async function _writeVulnAudit({ vulnerability, action, changedFields, previousValues, newValues, organizationId }) {
+async function _writeVulnAudit({ vulnerability, action, changedFields, previousValues, newValues, organizationId, systemGenerated = false }) {
   const user = getCurrentUser();
   if (!user) {
     console.warn('[_writeVulnAudit] no authenticated user — skipping audit write');
@@ -505,12 +615,13 @@ async function _writeVulnAudit({ vulnerability, action, changedFields, previousV
   try {
     await pb.collection('vulnerability_audit_log').create({
       vulnerability,
-      user:            user.id,
-      organization:    effectiveOrgId,
+      user:             user.id,
+      organization:     effectiveOrgId,
       action,
-      changed_fields:  changedFields,
-      previous_values: previousValues,
-      new_values:      newValues,
+      changed_fields:   changedFields,
+      previous_values:  previousValues,
+      new_values:       newValues,
+      system_generated: systemGenerated,
     }, { requestKey: null });
   } catch (err) {
     console.error('[_writeVulnAudit] audit write failed — vulnerability:', vulnerability, 'action:', action, err);

@@ -194,12 +194,16 @@ export function normalizeEpss(epssScore) {
  * @returns {number} Composite score rounded to one decimal place
  */
 export function calculateCompositeScore(vuln, weights = DEFAULT_WEIGHTS) {
+  // KEV override: if the CVE is in the CISA Known Exploited Vulnerabilities catalog,
+  // always score exploitability at the maximum level regardless of the dropdown value.
+  const effectiveExploitability = vuln.isKev ? 'Actively Exploited' : vuln.exploitability;
+
   const scores = {
     criticality:   normalizeAssetCriticality(vuln.assetCriticality),
     assetCount:    normalizeAffectedAssetCount(vuln.affectedAssetCount),
     cvss:          normalizeCvss(vuln.cvssScore),
     exposure:      normalizeInternetExposure(vuln.internetFacing),
-    exploitability: normalizeExploitability(vuln.exploitability),
+    exploitability: normalizeExploitability(effectiveExploitability),
     days:          normalizeDays(vuln.daysSinceDiscovery),
     epss:          normalizeEpss(vuln.epssScore),
   };
@@ -278,5 +282,7 @@ export function scoreVulnerability(vuln, weights = DEFAULT_WEIGHTS) {
     riskTier,
     epssScore:      vuln.epssScore      ?? null,
     epssPercentile: vuln.epssPercentile ?? null,
+    isKev:          vuln.isKev          ?? false,
+    kevDateAdded:   vuln.kevDateAdded   ?? null,
   };
 }

@@ -17,6 +17,7 @@ import {
   updateScoringWeights,
   updateVulnerability,
   fetchOrgSettings,
+  syncKevFeed,
 } from './lib/api.js';
 import { scoreVulnerability, DEFAULT_WEIGHTS } from './utils/scoringEngine';
 
@@ -95,7 +96,23 @@ export default function App() {
 
       setWeights(resolvedWeights);
       // Re-score on load to keep scores consistent with current weights
-      setVulnerabilities(records.map((r) => scoreVulnerability(r, resolvedWeights)));
+      const scoredRecords = records.map((r) => scoreVulnerability(r, resolvedWeights));
+      setVulnerabilities(scoredRecords);
+
+      // Auto-sync KEV feed in the background if never synced or last sync > 24 hours ago
+      const lastSync = settingsRecord?.lastKevSync;
+      const needsSync = !lastSync || (Date.now() - new Date(lastSync).getTime() > 24 * 60 * 60 * 1000);
+      if (needsSync) {
+        syncKevFeed(scoredRecords, orgId)
+          .then(async (result) => {
+            if (!result.error) {
+              const fresh = await fetchVulnerabilities(orgId);
+              setVulnerabilities(fresh.map((r) => scoreVulnerability(r, resolvedWeights)));
+              setOrgSettings((prev) => ({ ...prev, lastKevSync: result.lastSync }));
+            }
+          })
+          .catch(() => {}); // silent background failure — non-blocking
+      }
     } catch (err) {
       console.error('[loadData] error:', err);
       setError('Failed to load data. Is PocketBase running on http://localhost:8090?');
@@ -115,7 +132,19 @@ export default function App() {
     const scored = scoreVulnerability(vuln, weights);
     try {
       const record = await createVulnerability(scored, organizationIdRef.current);
-      setVulnerabilities((prev) => [scoreVulnerability(record, weights), ...prev]);
+      const newVuln = scoreVulnerability(record, weights);
+      setVulnerabilities((prev) => [newVuln, ...prev]);
+
+      // Check the new CVE against the KEV catalog in the background
+      syncKevFeed([newVuln], organizationIdRef.current)
+        .then(async (result) => {
+          if (!result.error && result.newMatches.length > 0) {
+            const fresh = await fetchVulnerabilities(organizationIdRef.current);
+            setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights)));
+            setOrgSettings((prev) => ({ ...prev, lastKevSync: result.lastSync }));
+          }
+        })
+        .catch(() => {});
     } catch (err) {
       setError('Failed to save vulnerability: ' + (err?.message ?? 'unknown error'));
     }
@@ -136,10 +165,19 @@ export default function App() {
       const saved = await Promise.all(
         scored.map((r) => createVulnerability(r, organizationIdRef.current))
       );
-      setVulnerabilities((prev) => [
-        ...saved.map((r) => scoreVulnerability(r, weights)),
-        ...prev,
-      ]);
+      const newVulns = saved.map((r) => scoreVulnerability(r, weights));
+      setVulnerabilities((prev) => [...newVulns, ...prev]);
+
+      // Check all newly imported CVEs against the KEV catalog in the background
+      syncKevFeed(newVulns, organizationIdRef.current)
+        .then(async (result) => {
+          if (!result.error && result.newMatches.length > 0) {
+            const fresh = await fetchVulnerabilities(organizationIdRef.current);
+            setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights)));
+            setOrgSettings((prev) => ({ ...prev, lastKevSync: result.lastSync }));
+          }
+        })
+        .catch(() => {});
     } catch (err) {
       setError('Import failed: ' + (err?.message ?? 'unknown error'));
     }
@@ -184,6 +222,16 @@ export default function App() {
     } catch (err) {
       setError('Failed to update vulnerability: ' + (err?.message ?? 'unknown error'));
     }
+  }
+
+  async function handleKevSync() {
+    const result = await syncKevFeed(vulnerabilities, organizationIdRef.current);
+    if (!result.error) {
+      const fresh = await fetchVulnerabilities(organizationIdRef.current);
+      setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights)));
+      setOrgSettings((prev) => ({ ...prev, lastKevSync: result.lastSync }));
+    }
+    return result;
   }
 
   function handleLogout() {
@@ -258,7 +306,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.7.4 &mdash; Date tracking</p>
+                <p className="text-xs text-gray-500">v0.8.0 &mdash; CISA KEV integration</p>
               </div>
             </div>
 
@@ -372,6 +420,7 @@ export default function App() {
           currentUser={user}
           onClose={() => setShowSettings(false)}
           onSettingsSaved={(updated) => setOrgSettings((prev) => ({ ...prev, ...updated }))}
+          onSyncKev={handleKevSync}
         />
       )}
     </div>

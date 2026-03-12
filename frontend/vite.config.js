@@ -21,6 +21,20 @@ export default defineConfig({
           });
         },
       },
+      // Forward /kev-api/* to www.cisa.gov server-side, bypassing CORS.
+      // CISA returns 200 OK but omits Access-Control-Allow-Origin headers.
+      '/kev-api': {
+        target:       'https://www.cisa.gov',
+        changeOrigin: true,
+        rewrite:      (path) => path.replace(/^\/kev-api/, ''),
+        configure:    (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.removeHeader('origin');
+            proxyReq.removeHeader('referer');
+            proxyReq.removeHeader('cookie');
+          });
+        },
+      },
     },
   },
   test: {

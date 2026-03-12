@@ -10,6 +10,7 @@ const COLUMNS = [
   { key: 'title',              label: 'Title',           align: 'left'   },
   { key: 'cvssScore',          label: 'CVSS',            align: 'center' },
   { key: 'epssScore',          label: 'EPSS',            align: 'center' },
+  { key: 'isKev',              label: 'KEV',             align: 'center' },
   { key: 'assetCriticality',   label: 'Criticality',     align: 'left'   },
   { key: 'exploitability',     label: 'Exploitability',  align: 'left'   },
   { key: 'internetFacing',     label: 'Internet',        align: 'center' },
@@ -166,6 +167,12 @@ function FilterBar({ filters, onChange, onClear, hasFilters, vulnerabilities }) 
         ))}
       </select>
 
+      <select value={filters.kev} onChange={(e) => onChange('kev', e.target.value)} className={fSelectClass}>
+        <option value="">All (KEV + Non-KEV)</option>
+        <option value="kev_only">KEV Only</option>
+        <option value="non_kev">Non-KEV</option>
+      </select>
+
       {hasFilters && (
         <button type="button" onClick={onClear}
           className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 shadow-sm hover:bg-gray-100 transition-colors">
@@ -181,7 +188,7 @@ function FilterBar({ filters, onChange, onClear, hasFilters, vulnerabilities }) 
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-const EMPTY_FILTERS = { search: '', riskTier: '', assetCriticality: '', internetFacing: '', groupName: '', assignedTo: '' };
+const EMPTY_FILTERS = { search: '', riskTier: '', assetCriticality: '', internetFacing: '', groupName: '', assignedTo: '', kev: '' };
 
 export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights }) {
   const [filters, setFilters]   = useState(EMPTY_FILTERS);
@@ -359,6 +366,13 @@ function VulnRow({ vuln, rank, onDelete, onEdit }) {
         {vuln.epssScore !== null && vuln.epssScore !== undefined
           ? `${(vuln.epssScore * 100).toFixed(1)}%`
           : '—'}
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-center">
+        {vuln.isKev ? (
+          <span className="inline-flex rounded px-1.5 py-0.5 text-xs font-bold bg-red-700 text-white">KEV</span>
+        ) : (
+          <span className="text-gray-300">—</span>
+        )}
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <CriticalityBadge value={vuln.assetCriticality} />

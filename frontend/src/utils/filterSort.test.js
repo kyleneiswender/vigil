@@ -230,3 +230,38 @@ describe('sortVulns — dateAdded field', () => {
     expect(datedVulns).toEqual(original);
   });
 });
+
+// ─── filterVulns — kev filter ─────────────────────────────────────────────────
+
+describe('filterVulns — kev filter', () => {
+  const kevVulns = [
+    { id: '1', cveId: 'CVE-2024-0001', title: 'Alpha', riskTier: { tier: 'Critical' },
+      assetCriticality: 'High', internetFacing: true, groupName: '', assignedToEmail: '',
+      compositeScore: 90, isKev: true },
+    { id: '2', cveId: 'CVE-2024-0002', title: 'Beta',  riskTier: { tier: 'High' },
+      assetCriticality: 'Medium', internetFacing: false, groupName: '', assignedToEmail: '',
+      compositeScore: 65, isKev: false },
+    { id: '3', cveId: 'CVE-2024-0003', title: 'Gamma', riskTier: { tier: 'Medium' },
+      assetCriticality: 'Low', internetFacing: false, groupName: '', assignedToEmail: '',
+      compositeScore: 45, isKev: true },
+  ];
+
+  const EMPTY_KEV = {
+    search: '', riskTier: '', assetCriticality: '', internetFacing: '',
+    groupName: '', assignedTo: '', kev: '',
+  };
+
+  it('kev="" returns all records', () => {
+    expect(filterVulns(kevVulns, { ...EMPTY_KEV, kev: '' })).toHaveLength(3);
+  });
+
+  it('kev="kev_only" returns only KEV-flagged records', () => {
+    const result = filterVulns(kevVulns, { ...EMPTY_KEV, kev: 'kev_only' });
+    expect(result.map((v) => v.id).sort()).toEqual(['1', '3']);
+  });
+
+  it('kev="non_kev" returns only non-KEV records', () => {
+    const result = filterVulns(kevVulns, { ...EMPTY_KEV, kev: 'non_kev' });
+    expect(result.map((v) => v.id)).toEqual(['2']);
+  });
+});

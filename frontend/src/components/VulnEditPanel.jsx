@@ -123,6 +123,9 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
     try {
       await onSave(vuln.id, {
         ...form,
+        // Pass KEV fields through so scoreVulnerability applies the override correctly
+        isKev:              vuln.isKev        ?? false,
+        kevDateAdded:       vuln.kevDateAdded ?? null,
         cvssScore:          Number(form.cvssScore),
         daysSinceDiscovery: Number(form.daysSinceDiscovery),
         affectedAssetCount: Number(form.affectedAssetCount),
@@ -252,6 +255,21 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
             <p className="mt-1 text-xs text-gray-400">Set automatically when the record was created.</p>
           </div>
 
+          {/* CISA KEV (read-only) */}
+          <div>
+            <p className={labelClass}>CISA KEV Status</p>
+            <p className={`rounded-md border px-3 py-2 text-sm font-medium ${
+              vuln.isKev
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : 'border-gray-200 bg-gray-50 text-gray-700'
+            }`}>
+              {vuln.isKev
+                ? `Yes — added ${formatDate(vuln.kevDateAdded)}`
+                : 'No'}
+            </p>
+            <p className="mt-1 text-xs text-gray-400">Set automatically by CISA KEV sync. Cannot be edited manually.</p>
+          </div>
+
           {/* Asset Criticality */}
           <div>
             <label htmlFor="edit-assetCriticality" className={labelClass}>
@@ -283,12 +301,17 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
               value={form.exploitability}
               onChange={handleChange}
               disabled={saving}
-              className={selectClass}
+              className={`${selectClass} ${vuln.isKev ? 'opacity-60' : ''}`}
             >
               <option value="Theoretical">Theoretical</option>
               <option value="PoC Exists">PoC Exists</option>
               <option value="Actively Exploited">Actively Exploited</option>
             </select>
+            {vuln.isKev && (
+              <p className="mt-1 text-xs text-red-600 font-medium">
+                Exploitability overridden by CISA KEV — scored as Actively Exploited regardless of this value.
+              </p>
+            )}
           </div>
 
           {/* Days Since Discovery */}

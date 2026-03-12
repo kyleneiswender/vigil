@@ -57,13 +57,29 @@ function XIcon() {
  *
  * @param {{ organizationId: string, currentUser: object, onClose: () => void, onSettingsSaved: (settings: object) => void }} props
  */
-export default function SettingsPanel({ organizationId, currentUser, onClose, onSettingsSaved }) {
-  const [nvdKey,     setNvdKey]     = useState('');
-  const [showKey,    setShowKey]    = useState(false);
-  const [loading,    setLoading]    = useState(true);
-  const [saving,     setSaving]     = useState(false);
-  const [error,      setError]      = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
+/** Format a PocketBase/ISO datetime as MM/DD/YYYY HH:MM (UTC). */
+function formatKevSyncTime(isoString) {
+  if (!isoString) return null;
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return null;
+  const mm  = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd  = String(d.getUTCDate()).padStart(2, '0');
+  const yyyy = d.getUTCFullYear();
+  const hh  = String(d.getUTCHours()).padStart(2, '0');
+  const min = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${mm}/${dd}/${yyyy} ${hh}:${min}`;
+}
+
+export default function SettingsPanel({ organizationId, currentUser, onClose, onSettingsSaved, onSyncKev }) {
+  const [nvdKey,      setNvdKey]      = useState('');
+  const [showKey,     setShowKey]     = useState(false);
+  const [loading,     setLoading]     = useState(true);
+  const [saving,      setSaving]      = useState(false);
+  const [error,       setError]       = useState('');
+  const [successMsg,  setSuccessMsg]  = useState('');
+  const [lastKevSync, setLastKevSync] = useState(null);
+  const [kevSyncing,  setKevSyncing]  = useState(false);
+  const [kevResult,   setKevResult]   = useState(null);
 
   const isAdmin = currentUser?.role === 'admin';
 
@@ -72,6 +88,7 @@ export default function SettingsPanel({ organizationId, currentUser, onClose, on
       try {
         const record = await fetchOrgSettings(organizationId);
         setNvdKey(record?.nvd_api_key ?? '');
+        setLastKevSync(record?.lastKevSync ?? null);
       } catch (e) {
         setError('Failed to load settings: ' + (e?.message ?? 'unknown error'));
       } finally {
@@ -94,6 +111,22 @@ export default function SettingsPanel({ organizationId, currentUser, onClose, on
       setError('Failed to save settings: ' + (e?.message ?? 'unknown error'));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSyncKev() {
+    setKevSyncing(true);
+    setKevResult(null);
+    try {
+      const result = await onSyncKev();
+      setKevResult(result);
+      if (!result.error) {
+        setLastKevSync(result.lastSync);
+      }
+    } catch {
+      setKevResult({ error: 'network_error' });
+    } finally {
+      setKevSyncing(false);
     }
   }
 
@@ -136,6 +169,7 @@ export default function SettingsPanel({ organizationId, currentUser, onClose, on
         {loading ? (
           <div className="py-16 text-center text-sm text-gray-400">Loading settings…</div>
         ) : (
+          <>
           <SettingsSection
             title="NVD API Configuration"
             description="Connect to the NIST National Vulnerability Database to auto-populate CVE details in the Add Vulnerability form."
@@ -201,6 +235,58 @@ export default function SettingsPanel({ organizationId, currentUser, onClose, on
               </div>
             )}
           </SettingsSection>
+
+          <SettingsSection
+            title="CISA KEV Sync"
+            description="Sync with the CISA Known Exploited Vulnerabilities catalog to automatically flag tracked vulnerabilities that are actively exploited in the wild."
+          >
+            {/* Last synced */}
+            <p className="text-sm text-gray-600">
+              {lastKevSync
+                ? <><span className="font-medium">Last synced:</span> {formatKevSyncTime(lastKevSync)}</>
+                : <span className="text-gray-400">Never synced</span>}
+            </p>
+
+            {/* Sync result message */}
+            {kevResult && !kevResult.error && (
+              <div className="rounded-md bg-green-50 border border-green-200 px-4 py-2.5 text-sm text-green-700">
+                {kevResult.newMatches.length === 0
+                  ? 'Sync complete. No new KEV matches found.'
+                  : `Sync complete. ${kevResult.newMatches.length} new KEV ${kevResult.newMatches.length === 1 ? 'match' : 'matches'} found: ${kevResult.newMatches.join(', ')}`}
+              </div>
+            )}
+            {kevResult?.error && (
+              <div className="rounded-md bg-red-50 border border-red-200 px-4 py-2.5 text-sm text-red-700">
+                KEV sync failed. Check your connection and try again.
+              </div>
+            )}
+
+            {/* Sync Now button */}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSyncKev}
+                disabled={kevSyncing}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white
+                           shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50
+                           flex items-center gap-2"
+              >
+                {kevSyncing && (
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+                  </svg>
+                )}
+                {kevSyncing ? 'Syncing…' : 'Sync Now'}
+              </button>
+              {kevResult && !kevResult.error && (
+                <span className="text-xs text-gray-500">
+                  {kevResult.totalMatched} total KEV {kevResult.totalMatched === 1 ? 'match' : 'matches'} in your tracked vulnerabilities
+                </span>
+              )}
+            </div>
+          </SettingsSection>
+          </>
         )}
       </div>
     </div>
