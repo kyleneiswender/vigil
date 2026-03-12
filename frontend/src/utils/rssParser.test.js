@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { parseRssFeed, sortArticles } from './rssParser.js';
+import {
+  parseRssFeed, sortArticles,
+  filterArticlesByAge, capArticles, deduplicateArticles,
+  MAX_ARTICLES_PER_FEED, MAX_ARTICLES_TOTAL,
+} from './rssParser.js';
 
 // ─── Fixture XML strings ──────────────────────────────────────────────────────
 
@@ -182,5 +186,140 @@ describe('sortArticles', () => {
 
   it('S5: returns empty array for empty input', () => {
     expect(sortArticles([])).toEqual([]);
+  });
+});
+
+// ─── filterArticlesByAge ───────────────────────────────────────────────────────
+
+describe('filterArticlesByAge', () => {
+  it('A1: keeps article published within 30 days', () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const articles = [{ title: 'Recent', pubDate: yesterday.toISOString() }];
+    expect(filterArticlesByAge(articles)).toHaveLength(1);
+  });
+
+  it('A2: removes article published more than 30 days ago', () => {
+    const old = new Date();
+    old.setDate(old.getDate() - 31);
+    const articles = [{ title: 'Old', pubDate: old.toISOString() }];
+    expect(filterArticlesByAge(articles)).toHaveLength(0);
+  });
+
+  it('A3: keeps article with null pubDate', () => {
+    const articles = [{ title: 'No date', pubDate: null }];
+    expect(filterArticlesByAge(articles)).toHaveLength(1);
+  });
+
+  it('A4: keeps article with unparseable pubDate', () => {
+    const articles = [{ title: 'Bad date', pubDate: 'not-a-date' }];
+    expect(filterArticlesByAge(articles)).toHaveLength(1);
+  });
+
+  it('A5: keeps article published 29 days ago (within the 30-day window)', () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 29);
+    const articles = [{ title: '29 days old', pubDate: d.toISOString() }];
+    expect(filterArticlesByAge(articles)).toHaveLength(1);
+  });
+
+  it('A6: returns empty array for empty input', () => {
+    expect(filterArticlesByAge([])).toEqual([]);
+  });
+});
+
+// ─── capArticles ───────────────────────────────────────────────────────────────
+
+describe('capArticles', () => {
+  it('B1: enforces per-feed cap at MAX_ARTICLES_PER_FEED', () => {
+    const articles = Array.from({ length: 60 }, (_, i) => ({
+      feedName: 'Feed A',
+      title: `Article ${i}`,
+    }));
+    const result = capArticles(articles);
+    expect(result).toHaveLength(MAX_ARTICLES_PER_FEED);
+    expect(result.every(a => a.feedName === 'Feed A')).toBe(true);
+  });
+
+  it('B2: enforces total cap at MAX_ARTICLES_TOTAL across many feeds', () => {
+    // 11 feeds × 50 articles = 550 input items (all pass per-feed cap individually)
+    const articles = [];
+    for (let feed = 0; feed < 11; feed++) {
+      for (let i = 0; i < 50; i++) {
+        articles.push({ feedName: `Feed ${feed}`, title: `Article ${i}` });
+      }
+    }
+    const result = capArticles(articles);
+    expect(result).toHaveLength(MAX_ARTICLES_TOTAL);
+  });
+
+  it('B3: mixed feeds — per-feed cap and total cap applied correctly', () => {
+    // Feed A: 60 articles (cap to 50), Feed B: 10 articles (kept all)
+    const feedA = Array.from({ length: 60 }, (_, i) => ({ feedName: 'A', title: `A${i}` }));
+    const feedB = Array.from({ length: 10 }, (_, i) => ({ feedName: 'B', title: `B${i}` }));
+    const result = capArticles([...feedA, ...feedB]);
+    expect(result).toHaveLength(60); // 50 from A + 10 from B
+    expect(result.filter(a => a.feedName === 'A')).toHaveLength(MAX_ARTICLES_PER_FEED);
+    expect(result.filter(a => a.feedName === 'B')).toHaveLength(10);
+  });
+});
+
+// ─── deduplicateArticles ───────────────────────────────────────────────────────
+
+describe('deduplicateArticles', () => {
+  it('C1: removes duplicate URLs, keeping first occurrence', () => {
+    const articles = [
+      { title: 'First',  link: 'https://example.com/a' },
+      { title: 'Dupe',   link: 'https://example.com/a' },
+      { title: 'Second', link: 'https://example.com/b' },
+    ];
+    const result = deduplicateArticles(articles);
+    expect(result).toHaveLength(2);
+    expect(result[0].title).toBe('First');
+    expect(result[1].title).toBe('Second');
+  });
+
+  it('C2: keeps articles without a link (no dedup key)', () => {
+    const articles = [
+      { title: 'No link A', link: null },
+      { title: 'No link B', link: null },
+    ];
+    expect(deduplicateArticles(articles)).toHaveLength(2);
+  });
+
+  it('C3: first occurrence wins when URLs match', () => {
+    const articles = [
+      { title: 'Original', link: 'https://example.com/x' },
+      { title: 'Duplicate', link: 'https://example.com/x' },
+    ];
+    const result = deduplicateArticles(articles);
+    expect(result[0].title).toBe('Original');
+  });
+});
+
+// ─── Pipeline order ────────────────────────────────────────────────────────────
+
+describe('article pipeline', () => {
+  it('D1: age filter applied before cap — old articles do not consume the cap budget', () => {
+    const recentDate = new Date().toISOString();
+    const oldDate    = '2000-01-01T00:00:00Z';
+
+    // 51 recent + 10 old for one feed
+    const recent = Array.from({ length: 51 }, (_, i) => ({
+      feedName: 'Feed', pubDate: recentDate, link: `https://example.com/new/${i}`,
+    }));
+    const old = Array.from({ length: 10 }, (_, i) => ({
+      feedName: 'Feed', pubDate: oldDate, link: `https://example.com/old/${i}`,
+    }));
+
+    // Filter first: old articles removed, 51 recent remain
+    const filtered = filterArticlesByAge([...recent, ...old]);
+    expect(filtered).toHaveLength(51);
+    expect(filtered.some(a => a.pubDate === oldDate)).toBe(false);
+
+    // Cap after filter: per-feed limit of 50 applied to the 51 recent
+    const capped = capArticles(filtered);
+    expect(capped).toHaveLength(MAX_ARTICLES_PER_FEED);
+    expect(capped.every(a => a.pubDate === recentDate)).toBe(true);
   });
 });

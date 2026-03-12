@@ -24,13 +24,24 @@ import {
   createRssFeed,
   updateRssFeed,
   deleteRssFeed,
+  fetchRssFeedContent,
 } from './lib/api.js';
 import { scoreVulnerability, DEFAULT_WEIGHTS } from './utils/scoringEngine';
+import {
+  parseRssFeed,
+  sortArticles,
+  filterArticlesByAge,
+  capArticles,
+  deduplicateArticles,
+} from './utils/rssParser.js';
+import { getReadArticles, markArticleRead, pruneReadArticles } from './utils/readState.js';
+
+const STALE_MS = 24 * 60 * 60 * 1000;
+function isStale(ts) { return !ts || Date.now() - new Date(ts).getTime() > STALE_MS; }
 
 const DEFAULT_FEEDS = [
   { name: 'CISA Cyber Alerts',   url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml'},
   { name: 'CISA News', url: 'https://www.cisa.gov/news.xml'},
-  { name: 'SANS Internet Storm', url: 'https://isc.sans.edu/rssfeed_full.xml' },
   { name: 'Krebs on Security',   url: 'https://krebsonsecurity.com/feed/'     },
 ];
 
@@ -48,8 +59,16 @@ export default function App() {
   const [showUserMgmt,    setShowUserMgmt]    = useState(false);
   const [showSettings,    setShowSettings]    = useState(false);
   const [orgSettings,     setOrgSettings]     = useState(null);
-  const [rssFeeds,        setRssFeeds]        = useState([]);
-  const [activeTab,       setActiveTab]       = useState('vulnerabilities');
+  const [rssFeeds,           setRssFeeds]           = useState([]);
+  const [activeTab,          setActiveTab]          = useState('vulnerabilities');
+  const [feedArticles,       setFeedArticles]       = useState([]);
+  const [feedsLastRefreshed, setFeedsLastRefreshed] = useState(null);
+  const [feedsLoading,       setFeedsLoading]       = useState(false);
+  const [feedErrors,         setFeedErrors]         = useState({});
+  const [readArticleUrls,    setReadArticleUrls]    = useState(new Set());
+
+  const feedArticlesRef     = useRef([]);
+  const feedsAutoFetchedRef = useRef(false);
 
   // ── Re-check auth on authStore changes (e.g. token expiry) ─────────────────
   useEffect(() => {
@@ -88,6 +107,10 @@ export default function App() {
         return;
       }
       organizationIdRef.current = orgId;
+
+      // Restore per-user read state from localStorage
+      const userId = pb.authStore.model?.id ?? '';
+      setReadArticleUrls(getReadArticles(userId));
 
       const [records, weightsRecord, settingsRecord, feedsData] = await Promise.all([
         fetchVulnerabilities(orgId),
@@ -282,14 +305,101 @@ export default function App() {
     setRssFeeds((prev) => prev.map((f) => f.id === feedId ? { ...f, ...updates } : f));
   }
 
+  async function doFetchFeeds(feedsToFetch) {
+    setFeedsLoading(true);
+    const newErrors  = {};
+    const resultsByFeed = {};
+
+    await Promise.all(
+      feedsToFetch.map(async (feed) => {
+        const result = await fetchRssFeedContent(feed.url);
+        const now    = new Date().toISOString();
+
+        if (result.error) {
+          newErrors[feed.id] = 'error';
+          resultsByFeed[feed.id] = [];
+          try {
+            await updateRssFeed(feed.id, { lastFetched: now, lastFetchedStatus: 'error' });
+            handleFeedMetaUpdated(feed.id, { lastFetched: now, lastFetchedStatus: 'error' });
+          } catch { /* non-critical */ }
+          return;
+        }
+
+        const parsed = parseRssFeed(result.xml, feed.name);
+        if (parsed.error) {
+          newErrors[feed.id] = 'error';
+          resultsByFeed[feed.id] = [];
+          try {
+            await updateRssFeed(feed.id, { lastFetched: now, lastFetchedStatus: 'error' });
+            handleFeedMetaUpdated(feed.id, { lastFetched: now, lastFetchedStatus: 'error' });
+          } catch { /* non-critical */ }
+          return;
+        }
+
+        const filtered = filterArticlesByAge(parsed.items);
+        resultsByFeed[feed.id] = filtered.map((item) => ({ ...item, feedId: feed.id }));
+        try {
+          await updateRssFeed(feed.id, { lastFetched: now, lastFetchedStatus: 'ok' });
+          handleFeedMetaUpdated(feed.id, { lastFetched: now, lastFetchedStatus: 'ok' });
+        } catch { /* non-critical */ }
+      })
+    );
+
+    // Merge fresh articles with retained articles from feeds NOT in this batch
+    const fetchingIds = new Set(feedsToFetch.map((f) => f.id));
+    const retained    = feedArticlesRef.current.filter((a) => !fetchingIds.has(a.feedId));
+    const fresh       = Object.values(resultsByFeed).flat();
+    const final       = capArticles(sortArticles(deduplicateArticles([...retained, ...fresh])));
+
+    feedArticlesRef.current = final;
+    setFeedArticles(final);
+    setFeedsLastRefreshed(new Date().toISOString());
+    setFeedErrors(newErrors);
+    setFeedsLoading(false);
+
+    // Prune localStorage read state to only active article URLs
+    const userId = getCurrentUser()?.id;
+    if (userId) {
+      pruneReadArticles(userId, final.map((a) => a.link).filter(Boolean));
+    }
+  }
+
+  // Auto-fetch stale feeds once after rssFeeds first loads
+  useEffect(() => {
+    if (!rssFeeds.length) return;
+    if (feedsAutoFetchedRef.current) return;
+    const stale = rssFeeds.filter((f) => f.enabled && isStale(f.lastFetched));
+    if (!stale.length) return; // nothing to fetch — don't mark as done yet
+    feedsAutoFetchedRef.current = true;
+    doFetchFeeds(stale);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rssFeeds]);
+
+  function handleRefreshFeeds() {
+    const enabled = rssFeeds.filter((f) => f.enabled);
+    if (enabled.length) doFetchFeeds(enabled);
+  }
+
+  function handleArticleRead(url) {
+    const userId = getCurrentUser()?.id;
+    markArticleRead(userId, url);
+    setReadArticleUrls((prev) => new Set([...prev, url]));
+  }
+
   function handleLogout() {
     logout();
-    organizationIdRef.current = null;
+    organizationIdRef.current  = null;
+    feedArticlesRef.current    = [];
+    feedsAutoFetchedRef.current = false;
     setVulnerabilities([]);
     setWeights({ ...DEFAULT_WEIGHTS });
     setOrgSettings(null);
     setRssFeeds([]);
     setActiveTab('vulnerabilities');
+    setFeedArticles([]);
+    setFeedsLastRefreshed(null);
+    setFeedErrors({});
+    setReadArticleUrls(new Set());
     setLoadFailed(false);
     setError('');
   }
@@ -339,6 +449,7 @@ export default function App() {
   }
 
   const user = getCurrentUser();
+  const unreadCount = feedArticles.filter((a) => a.link && !readArticleUrls.has(a.link)).length;
 
   // ── Render: main app ─────────────────────────────────────────────────────────
 
@@ -356,7 +467,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.8.1 &mdash; Intelligence feed</p>
+                <p className="text-xs text-gray-500">v0.8.2 &mdash; Feed persistence and read tracking</p>
               </div>
             </div>
 
@@ -424,7 +535,7 @@ export default function App() {
             <TabButton active={activeTab === 'vulnerabilities'} onClick={() => setActiveTab('vulnerabilities')}>
               Vulnerabilities
             </TabButton>
-            <TabButton active={activeTab === 'intelligence'} onClick={() => setActiveTab('intelligence')}>
+            <TabButton active={activeTab === 'intelligence'} onClick={() => setActiveTab('intelligence')} badge={unreadCount}>
               Intelligence
             </TabButton>
           </nav>
@@ -465,7 +576,16 @@ export default function App() {
         </main>
       )}
       {activeTab === 'intelligence' && (
-        <IntelligenceTab feeds={rssFeeds} onFeedUpdated={handleFeedMetaUpdated} />
+        <IntelligenceTab
+          feeds={rssFeeds}
+          articles={feedArticles}
+          feedsLoading={feedsLoading}
+          feedErrors={feedErrors}
+          onRefresh={handleRefreshFeeds}
+          userId={user?.id}
+          readArticleUrls={readArticleUrls}
+          onArticleRead={handleArticleRead}
+        />
       )}
 
       {editingVuln && (
@@ -510,7 +630,7 @@ function Pill({ color, children }) {
   );
 }
 
-function TabButton({ active, onClick, children }) {
+function TabButton({ active, onClick, children, badge = 0 }) {
   return (
     <button
       type="button"
@@ -521,7 +641,14 @@ function TabButton({ active, onClick, children }) {
           : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
         }`}
     >
-      {children}
+      <span className="flex items-center gap-1.5">
+        {children}
+        {badge > 0 && (
+          <span className="inline-flex items-center justify-center rounded-full bg-blue-500 text-white text-xs font-bold h-4 min-w-[1rem] px-1 leading-none">
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
+      </span>
     </button>
   );
 }

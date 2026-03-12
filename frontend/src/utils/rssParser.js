@@ -121,6 +121,74 @@ export function parseRssFeed(xml, feedName) {
 }
 
 /**
+ * Remove articles older than maxAgeDays. Articles with missing or unparseable
+ * dates are kept rather than silently dropped.
+ *
+ * @param {object[]} articles
+ * @param {number}   maxAgeDays  default 30
+ * @returns {object[]}
+ */
+export function filterArticlesByAge(articles, maxAgeDays = 30) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - maxAgeDays);
+
+  return articles.filter((article) => {
+    if (!article.pubDate) return true;
+    try {
+      const date = new Date(article.pubDate);
+      if (isNaN(date.getTime())) return true;
+      return date >= cutoff;
+    } catch {
+      return true;
+    }
+  });
+}
+
+export const MAX_ARTICLES_PER_FEED = 50;
+export const MAX_ARTICLES_TOTAL    = 500;
+
+/**
+ * Enforce a per-feed cap of MAX_ARTICLES_PER_FEED and an overall cap of
+ * MAX_ARTICLES_TOTAL. Input should already be sorted newest-first so the
+ * most recent articles are kept.
+ *
+ * @param {object[]} articles
+ * @returns {object[]}
+ */
+export function capArticles(articles) {
+  const byFeed = {};
+  const capped = [];
+
+  for (const article of articles) {
+    const feed = article.feedName ?? 'unknown';
+    byFeed[feed] = (byFeed[feed] ?? 0);
+    if (byFeed[feed] < MAX_ARTICLES_PER_FEED) {
+      capped.push(article);
+      byFeed[feed]++;
+    }
+  }
+
+  return capped.slice(0, MAX_ARTICLES_TOTAL);
+}
+
+/**
+ * Remove duplicate articles by URL. Articles without a link are always kept.
+ * First occurrence wins.
+ *
+ * @param {object[]} articles
+ * @returns {object[]}
+ */
+export function deduplicateArticles(articles) {
+  const seen = new Set();
+  return articles.filter((article) => {
+    if (!article.link) return true;
+    if (seen.has(article.link)) return false;
+    seen.add(article.link);
+    return true;
+  });
+}
+
+/**
  * Sort an array of article objects by publication date, descending.
  * Articles with unparseable or missing dates are placed at the bottom.
  *

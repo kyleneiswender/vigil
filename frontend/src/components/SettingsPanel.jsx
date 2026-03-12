@@ -280,7 +280,7 @@ export default function SettingsPanel({
                   className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white
                              shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
                 >
-                  {saving ? 'Saving…' : 'Save Settings'}
+                  {saving ? 'Saving…' : 'Save API Key'}
                 </button>
               </div>
             )}
@@ -343,6 +343,13 @@ export default function SettingsPanel({
               title="Feed Management"
               description="Configure RSS/Atom feeds shown in the Intelligence tab. Changes take effect on the next refresh."
             >
+              {/* Feed count warning */}
+              {feeds.length > 20 && (
+                <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs text-amber-700">
+                  Large numbers of feeds may affect performance. Consider disabling feeds you no longer need.
+                </div>
+              )}
+
               {/* Feed list */}
               {feeds.length === 0 ? (
                 <p className="text-sm text-gray-400">No feeds configured.</p>
