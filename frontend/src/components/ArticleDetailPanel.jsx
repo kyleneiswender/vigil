@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { sanitizeHtml }                  from '../utils/rssParser.js';
 import { formatDate }                    from '../utils/exportUtils.js';
 import { injectCveActions }              from '../utils/cveDetector.js';
@@ -87,17 +87,28 @@ export default function ArticleDetailPanel({ article, onClose, trackedCveIds = [
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const dateStr    = article.pubDate ? formatDate(article.pubDate) : null;
-  const rawHtml    = article.fullContent || article.description || '';
-  const safeHtml   = sanitizeHtml(rawHtml);
+  const dateStr      = article.pubDate ? formatDate(article.pubDate) : null;
+  const rawHtml      = article.fullContent || article.description || '';
+  const safeHtml     = sanitizeHtml(rawHtml);
   const enrichedHtml = injectCveActions(safeHtml, trackedCveIds);
-  const hasContent = safeHtml.trim().length > 0;
+  const hasContent   = safeHtml.trim().length > 0;
 
-  function handleBodyClick(e) {
-    const btn = e.target.closest('[data-cve-id]');
-    if (!btn || btn.disabled) return;
-    onAddCve?.(btn.dataset.cveId);
-  }
+  // Use a capture-phase native listener so we intercept the click BEFORE it
+  // bubbles up to any parent <a> element (which would open a new tab).
+  const bodyRef = useRef(null);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    function onCveClick(e) {
+      const btn = e.target.closest('[data-cve-id]');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onAddCve?.(btn.dataset.cveId);
+    }
+    el.addEventListener('click', onCveClick, true); // capture phase
+    return () => el.removeEventListener('click', onCveClick, true);
+  }, [onAddCve]);
 
   return (
     <>
@@ -145,8 +156,8 @@ export default function ArticleDetailPanel({ article, onClose, trackedCveIds = [
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {hasContent ? (
             <div
+              ref={bodyRef}
               data-article-body
-              onClick={handleBodyClick}
               dangerouslySetInnerHTML={{ __html: enrichedHtml }}
             />
           ) : (

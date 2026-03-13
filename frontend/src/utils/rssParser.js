@@ -39,10 +39,17 @@ export function sanitizeHtml(html) {
         }
       });
 
-      // Force external links to open safely in a new tab
+      // Strip relative/fragment hrefs — they resolve against localhost when
+      // rendered outside the original page context (e.g. CISA anchor links
+      // like href="#CVE-2026-22552"). Only absolute http(s) URLs are kept.
       if (el.tagName === 'A') {
-        el.setAttribute('target', '_blank');
-        el.setAttribute('rel', 'noopener noreferrer');
+        const href = el.getAttribute('href') ?? '';
+        if (href && !href.startsWith('https://') && !href.startsWith('http://')) {
+          el.removeAttribute('href');
+        } else {
+          el.setAttribute('target', '_blank');
+          el.setAttribute('rel', 'noopener noreferrer');
+        }
       }
     });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { lookupNvd, lookupEpss } from '../lib/api.js';
 import { formatEpssScore, formatEpssPercentile } from '../utils/epssUtils.js';
 
@@ -47,14 +47,17 @@ export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null,
   const [nvdFilled, setNvdFilled] = useState(new Set());
   // field names auto-filled by NVD; cleared when the user edits the field
 
-  // When a CVE ID is pre-filled from the Intelligence tab, populate the field
-  // and immediately trigger a lookup so the user sees results right away.
+  const formRef = useRef(null);
+
+  // When a CVE ID is pre-filled from the Intelligence tab, populate the field,
+  // scroll the form into view, and immediately trigger a lookup.
   useEffect(() => {
     if (!prefilledCveId) return;
     const upper = prefilledCveId.toUpperCase();
     setForm((prev) => ({ ...prev, cveId: upper }));
     setNvdStatus({ status: 'idle', message: '' });
     setNvdFilled(new Set());
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     handleNvdLookup(upper);
     onPrefillConsumed?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,7 +189,7 @@ export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null,
   const lookupBusy = nvdStatus.status === 'loading';
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div ref={formRef} className="rounded-xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-200 px-6 py-4">
         <h2 className="text-lg font-semibold text-gray-900">Add Vulnerability</h2>
         <p className="mt-0.5 text-sm text-gray-500">

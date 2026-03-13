@@ -118,6 +118,22 @@ export default function App() {
       const userId = pb.authStore.model?.id ?? '';
       setReadArticleUrls(getReadArticles(userId));
 
+      // Restore feed articles from sessionStorage so they survive page refreshes.
+      // The auto-fetch below will still replace stale-feed articles; non-stale
+      // feed articles come from this cache.
+      if (userId) {
+        try {
+          const raw = sessionStorage.getItem(`vuln_tool_session_articles_${userId}`);
+          if (raw) {
+            const cached = JSON.parse(raw);
+            if (Array.isArray(cached) && cached.length > 0) {
+              feedArticlesRef.current = cached;
+              setFeedArticles(cached);
+            }
+          }
+        } catch { /* sessionStorage unavailable or corrupted — ignore */ }
+      }
+
       const [records, weightsRecord, settingsRecord, feedsData] = await Promise.all([
         fetchVulnerabilities(orgId),
         fetchScoringWeights(orgId),
@@ -367,6 +383,10 @@ export default function App() {
     const userId = getCurrentUser()?.id;
     if (userId) {
       pruneReadArticles(userId, final.map((a) => a.link).filter(Boolean));
+      // Persist articles to sessionStorage so they survive page refreshes
+      try {
+        sessionStorage.setItem(`vuln_tool_session_articles_${userId}`, JSON.stringify(final));
+      } catch { /* quota exceeded — ignore */ }
     }
   }
 
@@ -398,6 +418,10 @@ export default function App() {
   }, []);
 
   function handleLogout() {
+    const userId = getCurrentUser()?.id;
+    if (userId) {
+      try { sessionStorage.removeItem(`vuln_tool_session_articles_${userId}`); } catch {}
+    }
     logout();
     organizationIdRef.current  = null;
     feedArticlesRef.current    = [];
