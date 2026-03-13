@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getRiskTier } from '../utils/scoringEngine';
+import { getRiskTier, TIER_COLORS } from '../utils/scoringEngine';
 import { filterVulns, sortVulns } from '../utils/filterSort';
 import { exportCSV, exportPDF, formatDate } from '../utils/exportUtils';
 
@@ -25,21 +25,20 @@ const COLUMNS = [
 
 // ─── Display sub-components (unchanged from Sprint 1/2) ───────────────────────
 
-function ScoreBar({ score }) {
-  const { tier } = getRiskTier(score);
-  const colorMap = { Critical: 'bg-red-500', High: 'bg-orange-500', Medium: 'bg-yellow-400', Low: 'bg-green-500' };
+function ScoreBar({ score, riskThresholds = {} }) {
+  const { tier } = getRiskTier(score, riskThresholds);
   return (
     <div className="flex items-center gap-2">
       <div className="h-2 w-24 rounded-full bg-gray-200">
-        <div className={`h-2 rounded-full transition-all ${colorMap[tier]}`} style={{ width: `${score}%` }} />
+        <div className={`h-2 rounded-full transition-all ${TIER_COLORS[tier].bar}`} style={{ width: `${score}%` }} />
       </div>
       <span className="text-sm font-semibold text-gray-800">{score}</span>
     </div>
   );
 }
 
-function TierBadge({ score }) {
-  const { tier, badge } = getRiskTier(score);
+function TierBadge({ score, riskThresholds = {} }) {
+  const { tier, badge } = getRiskTier(score, riskThresholds);
   return <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge}`}>{tier}</span>;
 }
 
@@ -190,7 +189,7 @@ function FilterBar({ filters, onChange, onClear, hasFilters, vulnerabilities }) 
 
 const EMPTY_FILTERS = { search: '', riskTier: '', assetCriticality: '', internetFacing: '', groupName: '', assignedTo: '', kev: '' };
 
-export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights }) {
+export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, riskThresholds = {} }) {
   const [filters, setFilters]   = useState(EMPTY_FILTERS);
   const [sortKey, setSortKey]   = useState('compositeScore');
   const [sortDir, setSortDir]   = useState('desc');
@@ -320,7 +319,7 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights }
               </tr>
             ) : (
               sorted.map((vuln, index) => (
-                <VulnRow key={vuln.id} vuln={vuln} rank={index + 1} onDelete={onDelete} onEdit={onEdit} />
+                <VulnRow key={vuln.id} vuln={vuln} rank={index + 1} onDelete={onDelete} onEdit={onEdit} riskThresholds={riskThresholds} />
               ))
             )}
           </tbody>
@@ -343,8 +342,8 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights }
 
 // ─── Row ──────────────────────────────────────────────────────────────────────
 
-function VulnRow({ vuln, rank, onDelete, onEdit }) {
-  const { bg, border } = getRiskTier(vuln.compositeScore ?? 0);
+function VulnRow({ vuln, rank, onDelete, onEdit, riskThresholds = {} }) {
+  const { bg, border } = getRiskTier(vuln.compositeScore ?? 0, riskThresholds);
 
   return (
     <tr className={`${bg} border-l-4 ${border} transition-colors hover:brightness-95`}>
@@ -394,10 +393,10 @@ function VulnRow({ vuln, rank, onDelete, onEdit }) {
         {(vuln.affectedAssetCount ?? 0).toLocaleString()}
       </td>
       <td className="whitespace-nowrap px-4 py-3">
-        <ScoreBar score={vuln.compositeScore ?? 0} />
+        <ScoreBar score={vuln.compositeScore ?? 0} riskThresholds={riskThresholds} />
       </td>
       <td className="whitespace-nowrap px-4 py-3">
-        <TierBadge score={vuln.compositeScore ?? 0} />
+        <TierBadge score={vuln.compositeScore ?? 0} riskThresholds={riskThresholds} />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
         {formatDate(vuln.dateAdded)}

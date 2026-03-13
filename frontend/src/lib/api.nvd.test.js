@@ -57,7 +57,7 @@ vi.mock('./pocketbase.js', () => ({
   logout: vi.fn(),
 }));
 
-import { initializeUser, lookupNvd, lookupEpss, fetchOrgSettings, updateOrgSettings, fetchKevCatalog, syncKevFeed } from './api.js';
+import { initializeUser, lookupNvd, lookupEpss, fetchOrgSettings, updateOrgSettings, fetchKevCatalog, syncKevFeed, validateThresholds, validateDefaultWeights } from './api.js';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -208,9 +208,14 @@ describe('H — lookupNvd(): NVD API lookup', () => {
 
 describe('I — fetchOrgSettings(): loads org settings from PocketBase', () => {
 
-  it('I1: returns the first record when list has entries', async () => {
+  it('I1: returns the first record when list has entries (augmented with defaults)', async () => {
     const result = await fetchOrgSettings(ORG_ID);
-    expect(result).toEqual(EXISTING_SETTINGS);
+    // fetchOrgSettings now augments raw record with threshold/defaultWeights defaults
+    expect(result).toMatchObject(EXISTING_SETTINGS);
+    expect(result.criticalThreshold).toBe(80);
+    expect(result.highThreshold).toBe(60);
+    expect(result.mediumThreshold).toBe(40);
+    expect(result.defaultWeights).toBeDefined();
     expect(m.orgSettingsGetFullList).toHaveBeenCalledOnce();
   });
 
@@ -461,5 +466,91 @@ describe('P — syncKevFeed(): compare catalog against tracked vulnerabilities',
     expect(result.error).toBe('network_error');
     expect(result.newMatches).toHaveLength(0);
     expect(m.vulnsUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Suite Q — validateThresholds ────────────────────────────────────────────
+
+describe('validateThresholds', () => {
+  it('Q1: valid thresholds return { valid: true, error: null }', () => {
+    const result = validateThresholds(80, 60, 40);
+    expect(result.valid).toBe(true);
+    expect(result.error).toBeNull();
+  });
+
+  it('Q2: critical === high is invalid', () => {
+    const result = validateThresholds(60, 60, 40);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('Q3: critical < high is invalid', () => {
+    const result = validateThresholds(50, 60, 40);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('Q4: high === medium is invalid', () => {
+    const result = validateThresholds(80, 40, 40);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('Q5: high < medium is invalid', () => {
+    const result = validateThresholds(80, 30, 40);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('Q6: medium = 0 is invalid (must be at least 1)', () => {
+    const result = validateThresholds(80, 60, 0);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('Q7: critical = 100 is invalid (must be at most 99)', () => {
+    const result = validateThresholds(100, 60, 40);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('Q8: boundary values critical=99, high=2, medium=1 are valid', () => {
+    const result = validateThresholds(99, 2, 1);
+    expect(result.valid).toBe(true);
+  });
+});
+
+// ─── Suite R2 — validateDefaultWeights ────────────────────────────────────────
+
+describe('validateDefaultWeights', () => {
+  const VALID_WEIGHTS = { criticality: 25, cvss: 20, assetCount: 15, exposure: 15, exploitability: 10, epss: 10, days: 5 };
+
+  it('R2-1: weights summing to 100 are valid', () => {
+    const result = validateDefaultWeights(VALID_WEIGHTS);
+    expect(result.valid).toBe(true);
+    expect(result.error).toBeNull();
+  });
+
+  it('R2-2: weights not summing to 100 are invalid', () => {
+    const result = validateDefaultWeights({ ...VALID_WEIGHTS, criticality: 50 });
+    expect(result.valid).toBe(false);
+    expect(result.error).toMatch(/100/);
+  });
+
+  it('R2-3: negative weight is invalid', () => {
+    const result = validateDefaultWeights({ ...VALID_WEIGHTS, criticality: -5 });
+    expect(result.valid).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('R2-4: all zeros (sum=0) is invalid', () => {
+    const zeros = { criticality: 0, cvss: 0, assetCount: 0, exposure: 0, exploitability: 0, epss: 0, days: 0 };
+    const result = validateDefaultWeights(zeros);
+    expect(result.valid).toBe(false);
+  });
+
+  it('R2-5: one factor 100, others 0 is valid', () => {
+    const result = validateDefaultWeights({ criticality: 100, cvss: 0, assetCount: 0, exposure: 0, exploitability: 0, epss: 0, days: 0 });
+    expect(result.valid).toBe(true);
   });
 });

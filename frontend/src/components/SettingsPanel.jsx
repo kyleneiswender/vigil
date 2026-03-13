@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { fetchOrgSettings, updateOrgSettings } from '../lib/api.js';
+import { fetchOrgSettings, updateOrgSettings, validateThresholds, validateDefaultWeights } from '../lib/api.js';
+import { DEFAULT_WEIGHTS, WEIGHT_LABELS, redistributeWeights } from '../utils/scoringEngine.js';
 import { formatDate } from '../utils/exportUtils.js';
 
 const labelClass = 'block text-sm font-medium text-gray-700 mb-1';
@@ -49,16 +50,56 @@ function XIcon() {
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ─── Tier band visualizer ─────────────────────────────────────────────────────
 
-/**
- * Full-page overlay for org-level settings.
- * Visible to all authenticated users; only admins can save changes.
- * Designed to be extensible — future sprints add sections for EPSS, KEV, RSS.
- *
- * @param {{ organizationId: string, currentUser: object, onClose: () => void, onSettingsSaved: (settings: object) => void }} props
- */
-/** Format a PocketBase/ISO datetime as MM/DD/YYYY HH:MM (UTC). */
+function TierBandVisualizer({ critical, high, medium }) {
+  const c = Number(critical) || 80;
+  const h = Number(high)     || 60;
+  const m = Number(medium)   || 40;
+
+  // Widths as percentages of 0–100 range
+  const lowW    = m;
+  const medW    = h - m;
+  const highW   = c - h;
+  const critW   = 100 - c;
+
+  const valid = c > h && h > m && m >= 1 && c <= 99;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex rounded-md overflow-hidden h-6 text-[10px] font-semibold">
+        {valid ? (
+          <>
+            <div className="bg-green-500 text-white flex items-center justify-center" style={{ width: `${lowW}%` }}>
+              {lowW >= 8 ? 'Low' : ''}
+            </div>
+            <div className="bg-yellow-400 text-yellow-900 flex items-center justify-center" style={{ width: `${medW}%` }}>
+              {medW >= 8 ? 'Med' : ''}
+            </div>
+            <div className="bg-orange-500 text-white flex items-center justify-center" style={{ width: `${highW}%` }}>
+              {highW >= 8 ? 'High' : ''}
+            </div>
+            <div className="bg-red-600 text-white flex items-center justify-center" style={{ width: `${critW}%` }}>
+              {critW >= 8 ? 'Crit' : ''}
+            </div>
+          </>
+        ) : (
+          <div className="bg-gray-200 text-gray-500 flex items-center justify-center w-full">
+            Invalid thresholds
+          </div>
+        )}
+      </div>
+      <div className="flex justify-between text-[10px] text-gray-400">
+        <span>0</span>
+        {valid && <><span style={{ marginLeft: `${m}%` }}>{m}</span><span style={{ marginLeft: `${h - m}%` }}>{h}</span><span style={{ marginLeft: `${c - h}%` }}>{c}</span></>}
+        <span>100</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Format PocketBase/ISO datetime as MM/DD/YYYY HH:MM (UTC) ─────────────────
+
 function formatKevSyncTime(isoString) {
   if (!isoString) return null;
   const d = new Date(isoString);
@@ -71,9 +112,15 @@ function formatKevSyncTime(isoString) {
   return `${mm}/${dd}/${yyyy} ${hh}:${min}`;
 }
 
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export default function SettingsPanel({
   organizationId, currentUser, onClose, onSettingsSaved, onSyncKev,
   feeds = [], onAddFeed, onDeleteFeed, onToggleFeed,
+  riskThresholds = { critical: 80, high: 60, medium: 40 },
+  orgDefaultWeights = null,
+  onThresholdsSaved,
+  onDefaultWeightsSaved,
 }) {
   const [nvdKey,      setNvdKey]      = useState('');
   const [showKey,     setShowKey]     = useState(false);
@@ -85,6 +132,18 @@ export default function SettingsPanel({
   const [kevSyncing,    setKevSyncing]    = useState(false);
   const [kevResult,     setKevResult]     = useState(null);
 
+  // ── Risk tier threshold state ───────────────────────────────────────────────
+  const [localThresholds,     setLocalThresholds]     = useState({ critical: 80, high: 60, medium: 40 });
+  const [thresholdsError,     setThresholdsError]     = useState('');
+  const [thresholdsSaving,    setThresholdsSaving]    = useState(false);
+  const [thresholdsSuccessMsg, setThresholdsSuccessMsg] = useState('');
+
+  // ── Default scoring weights state ───────────────────────────────────────────
+  const [localWeights,     setLocalWeights]     = useState({ ...DEFAULT_WEIGHTS });
+  const [weightsError,     setWeightsError]     = useState('');
+  const [weightsSaving,    setWeightsSaving]    = useState(false);
+  const [weightsSuccessMsg, setWeightsSuccessMsg] = useState('');
+
   // ── Feed management state (admin only) ─────────────────────────────────────
   const [addingFeed,     setAddingFeed]     = useState(false);
   const [newFeedName,    setNewFeedName]    = useState('');
@@ -94,6 +153,20 @@ export default function SettingsPanel({
   const [deletingFeedId, setDeletingFeedId] = useState(null);
 
   const isAdmin = currentUser?.role === 'admin';
+
+  // Sync local threshold state when prop changes (e.g. after save in parent)
+  useEffect(() => {
+    setLocalThresholds({
+      critical: riskThresholds.critical ?? 80,
+      high:     riskThresholds.high     ?? 60,
+      medium:   riskThresholds.medium   ?? 40,
+    });
+  }, [riskThresholds.critical, riskThresholds.high, riskThresholds.medium]);
+
+  // Sync local weights state when prop changes
+  useEffect(() => {
+    setLocalWeights(orgDefaultWeights ? { ...orgDefaultWeights } : { ...DEFAULT_WEIGHTS });
+  }, [orgDefaultWeights]);
 
   function isValidFeedUrl(url) {
     return url.startsWith('http://') || url.startsWith('https://');
@@ -180,6 +253,87 @@ export default function SettingsPanel({
     }
   }
 
+  // ── Threshold handlers ──────────────────────────────────────────────────────
+
+  function handleThresholdChange(key, raw) {
+    const val = Math.max(0, Math.min(99, Math.round(Number(raw) || 0)));
+    setLocalThresholds((prev) => ({ ...prev, [key]: val }));
+    setThresholdsError('');
+    setThresholdsSuccessMsg('');
+  }
+
+  async function handleSaveThresholds() {
+    const { critical, high, medium } = localThresholds;
+    const check = validateThresholds(critical, high, medium);
+    if (!check.valid) { setThresholdsError(check.error); return; }
+
+    setThresholdsSaving(true);
+    setThresholdsError('');
+    setThresholdsSuccessMsg('');
+    try {
+      await updateOrgSettings(organizationId, {
+        criticalThreshold: critical,
+        highThreshold:     high,
+        mediumThreshold:   medium,
+      });
+      setThresholdsSuccessMsg('Thresholds saved. Vulnerabilities re-tiered.');
+      onThresholdsSaved?.({ critical, high, medium });
+    } catch (e) {
+      setThresholdsError('Failed to save thresholds: ' + (e?.message ?? 'unknown error'));
+    } finally {
+      setThresholdsSaving(false);
+    }
+  }
+
+  function handleResetThresholds() {
+    setLocalThresholds({ critical: 80, high: 60, medium: 40 });
+    setThresholdsError('');
+    setThresholdsSuccessMsg('');
+  }
+
+  // ── Weights handlers ────────────────────────────────────────────────────────
+
+  function handleWeightChange(key, raw) {
+    const clamped = Math.max(0, Math.min(100, Math.round(Number(raw) || 0)));
+    setLocalWeights((prev) => redistributeWeights(prev, key, clamped));
+    setWeightsError('');
+    setWeightsSuccessMsg('');
+  }
+
+  async function handleSaveWeights() {
+    const check = validateDefaultWeights(localWeights);
+    if (!check.valid) { setWeightsError(check.error); return; }
+
+    setWeightsSaving(true);
+    setWeightsError('');
+    setWeightsSuccessMsg('');
+    try {
+      await updateOrgSettings(organizationId, {
+        defaultWeightCvss:          localWeights.cvss,
+        defaultWeightCriticality:   localWeights.criticality,
+        defaultWeightAssetCount:    localWeights.assetCount,
+        defaultWeightExposure:      localWeights.exposure,
+        defaultWeightExploitability: localWeights.exploitability,
+        defaultWeightEpss:          localWeights.epss,
+        defaultWeightDays:          localWeights.days,
+      });
+      setWeightsSuccessMsg('Default weights saved.');
+      onDefaultWeightsSaved?.({ ...localWeights });
+    } catch (e) {
+      setWeightsError('Failed to save weights: ' + (e?.message ?? 'unknown error'));
+    } finally {
+      setWeightsSaving(false);
+    }
+  }
+
+  function handleResetWeights() {
+    setLocalWeights({ ...DEFAULT_WEIGHTS });
+    setWeightsError('');
+    setWeightsSuccessMsg('');
+  }
+
+  const weightTotal = Object.values(localWeights).reduce((s, v) => s + v, 0);
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
       {/* ── Header ── */}
@@ -200,7 +354,7 @@ export default function SettingsPanel({
 
       {/* ── Body ── */}
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
-        {/* Banners */}
+        {/* Global banners */}
         {successMsg && (
           <div className="flex items-center justify-between rounded-md bg-green-50 border border-green-200 px-4 py-2.5">
             <p className="text-sm text-green-700">{successMsg}</p>
@@ -220,11 +374,11 @@ export default function SettingsPanel({
           <div className="py-16 text-center text-sm text-gray-400">Loading settings…</div>
         ) : (
           <>
+          {/* ── NVD API Configuration ── */}
           <SettingsSection
             title="NVD API Configuration"
             description="Connect to the NIST National Vulnerability Database to auto-populate CVE details in the Add Vulnerability form."
           >
-            {/* API key input */}
             <div>
               <label className={labelClass}>
                 NVD API Key <span className="text-gray-400 font-normal">(optional)</span>
@@ -270,7 +424,6 @@ export default function SettingsPanel({
               )}
             </div>
 
-            {/* Save */}
             {isAdmin && (
               <div className="flex justify-end">
                 <button
@@ -286,18 +439,170 @@ export default function SettingsPanel({
             )}
           </SettingsSection>
 
+          {/* ── Risk Tier Thresholds ── */}
+          <SettingsSection
+            title="Risk Tier Thresholds"
+            description="Set the minimum composite score required for each risk tier. Saving will re-evaluate all loaded vulnerabilities immediately."
+          >
+            {/* Band visualizer */}
+            <TierBandVisualizer
+              critical={localThresholds.critical}
+              high={localThresholds.high}
+              medium={localThresholds.medium}
+            />
+
+            {/* Three inputs */}
+            <div className="grid grid-cols-3 gap-4">
+              {[
+                { key: 'critical', label: 'Critical threshold', color: 'text-red-700' },
+                { key: 'high',     label: 'High threshold',     color: 'text-orange-700' },
+                { key: 'medium',   label: 'Medium threshold',   color: 'text-yellow-700' },
+              ].map(({ key, label, color }) => (
+                <div key={key}>
+                  <label className={`block text-sm font-medium mb-1 ${color}`}>{label}</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={localThresholds[key]}
+                    onChange={(e) => handleThresholdChange(key, e.target.value)}
+                    disabled={!isAdmin || thresholdsSaving}
+                    className={`${inputClass} ${!isAdmin ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <p className="text-xs text-gray-400">
+              Default: Critical=80, High=60, Medium=40. Low is everything below Medium.
+            </p>
+
+            {/* Feedback */}
+            {thresholdsSuccessMsg && (
+              <p className="text-sm text-green-700">{thresholdsSuccessMsg}</p>
+            )}
+            {thresholdsError && (
+              <p className="text-sm text-red-600">{thresholdsError}</p>
+            )}
+
+            {!isAdmin && (
+              <p className="text-xs text-amber-600">
+                Only admins can change settings. Contact your administrator.
+              </p>
+            )}
+
+            {isAdmin && (
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleResetThresholds}
+                  disabled={thresholdsSaving}
+                  className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:opacity-50"
+                >
+                  Reset to defaults
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveThresholds}
+                  disabled={thresholdsSaving}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white
+                             shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {thresholdsSaving ? 'Saving…' : 'Save Thresholds'}
+                </button>
+              </div>
+            )}
+          </SettingsSection>
+
+          {/* ── Default Scoring Weights ── */}
+          <SettingsSection
+            title="Default Scoring Weights"
+            description="Set org-level starting weights for the composite risk score. Users can override these in the weight configuration panel. Weights must sum to 100."
+          >
+            {/* 7-factor grid */}
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+              {Object.keys(DEFAULT_WEIGHTS).map((key) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    {WEIGHT_LABELS[key]}
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={localWeights[key]}
+                      onChange={(e) => handleWeightChange(key, e.target.value)}
+                      disabled={!isAdmin || weightsSaving}
+                      className={`w-20 rounded-md border border-gray-300 px-2 py-1.5 text-sm shadow-sm
+                                  focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500
+                                  ${!isAdmin ? 'bg-gray-50 text-gray-400 cursor-not-allowed' : ''}`}
+                    />
+                    <span className="text-sm text-gray-500">%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Running total */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Total:</span>
+              <span className={`text-sm font-semibold ${weightTotal === 100 ? 'text-green-700' : 'text-red-600'}`}>
+                {weightTotal}%
+              </span>
+              {weightTotal !== 100 && (
+                <span className="text-xs text-red-500">(must equal 100)</span>
+              )}
+            </div>
+
+            {/* Feedback */}
+            {weightsSuccessMsg && (
+              <p className="text-sm text-green-700">{weightsSuccessMsg}</p>
+            )}
+            {weightsError && (
+              <p className="text-sm text-red-600">{weightsError}</p>
+            )}
+
+            {!isAdmin && (
+              <p className="text-xs text-amber-600">
+                Only admins can change settings. Contact your administrator.
+              </p>
+            )}
+
+            {isAdmin && (
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleResetWeights}
+                  disabled={weightsSaving}
+                  className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:opacity-50"
+                >
+                  Reset to defaults
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveWeights}
+                  disabled={weightsSaving || weightTotal !== 100}
+                  className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white
+                             shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {weightsSaving ? 'Saving…' : 'Save Default Weights'}
+                </button>
+              </div>
+            )}
+          </SettingsSection>
+
+          {/* ── CISA KEV Sync ── */}
           <SettingsSection
             title="CISA KEV Sync"
             description="Sync with the CISA Known Exploited Vulnerabilities catalog to automatically flag tracked vulnerabilities that are actively exploited in the wild."
           >
-            {/* Last synced */}
             <p className="text-sm text-gray-600">
               {lastKevSync
                 ? <><span className="font-medium">Last synced:</span> {formatKevSyncTime(lastKevSync)}</>
                 : <span className="text-gray-400">Never synced</span>}
             </p>
 
-            {/* Sync result message */}
             {kevResult && !kevResult.error && (
               <div className="rounded-md bg-green-50 border border-green-200 px-4 py-2.5 text-sm text-green-700">
                 {kevResult.newMatches.length === 0
@@ -311,7 +616,6 @@ export default function SettingsPanel({
               </div>
             )}
 
-            {/* Sync Now button */}
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -343,14 +647,12 @@ export default function SettingsPanel({
               title="Feed Management"
               description="Configure RSS/Atom feeds shown in the Intelligence tab. Changes take effect on the next refresh."
             >
-              {/* Feed count warning */}
               {feeds.length > 20 && (
                 <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs text-amber-700">
                   Large numbers of feeds may affect performance. Consider disabling feeds you no longer need.
                 </div>
               )}
 
-              {/* Feed list */}
               {feeds.length === 0 ? (
                 <p className="text-sm text-gray-400">No feeds configured.</p>
               ) : (
@@ -358,7 +660,6 @@ export default function SettingsPanel({
                   {feeds.map((feed) => (
                     <li key={feed.id} className="py-3">
                       {deletingFeedId === feed.id ? (
-                        /* Confirm delete row */
                         <div className="flex items-center gap-3">
                           <span className="text-sm text-gray-700 flex-1">
                             Delete <span className="font-medium">{feed.name}</span>? This cannot be undone.
@@ -380,7 +681,6 @@ export default function SettingsPanel({
                         </div>
                       ) : (
                         <div className="flex items-start gap-3">
-                          {/* Enabled toggle */}
                           <button
                             type="button"
                             role="switch"
@@ -395,7 +695,6 @@ export default function SettingsPanel({
                                              ${feed.enabled ? 'translate-x-4' : 'translate-x-0'}`} />
                           </button>
 
-                          {/* Feed info */}
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-800">{feed.name}</p>
                             <p className="text-xs text-gray-400 truncate">{feed.url}</p>
@@ -409,7 +708,6 @@ export default function SettingsPanel({
                             </p>
                           </div>
 
-                          {/* Delete */}
                           <button
                             type="button"
                             onClick={() => setDeletingFeedId(feed.id)}
@@ -425,7 +723,6 @@ export default function SettingsPanel({
                 </ul>
               )}
 
-              {/* Add Feed */}
               {addingFeed ? (
                 <div className="rounded-md border border-gray-200 p-4 space-y-3 mt-2">
                   <div>

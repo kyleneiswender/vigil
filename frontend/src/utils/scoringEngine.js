@@ -223,59 +223,86 @@ export function calculateCompositeScore(vuln, weights = DEFAULT_WEIGHTS) {
 // --- Risk tier mapping ---
 
 /**
+ * Single source-of-truth for tier → Tailwind CSS class mapping.
+ * Used by getRiskTier and display components (VulnTable score bar, badges).
+ */
+export const TIER_COLORS = {
+  Critical: {
+    color:  'text-red-800',
+    bg:     'bg-red-50',
+    border: 'border-red-200',
+    badge:  'bg-red-600 text-white',
+    bar:    'bg-red-500',
+  },
+  High: {
+    color:  'text-orange-800',
+    bg:     'bg-orange-50',
+    border: 'border-orange-200',
+    badge:  'bg-orange-500 text-white',
+    bar:    'bg-orange-500',
+  },
+  Medium: {
+    color:  'text-yellow-800',
+    bg:     'bg-yellow-50',
+    border: 'border-yellow-200',
+    badge:  'bg-yellow-400 text-yellow-900',
+    bar:    'bg-yellow-400',
+  },
+  Low: {
+    color:  'text-green-800',
+    bg:     'bg-green-50',
+    border: 'border-green-200',
+    badge:  'bg-green-500 text-white',
+    bar:    'bg-green-500',
+  },
+};
+
+/**
  * Map a composite score to a named risk tier.
- * Critical: 80–100, High: 60–79, Medium: 40–59, Low: 0–39
  *
  * @param {number} score - Composite score (0–100)
- * @returns {{ tier: string, color: string, bg: string, border: string }}
+ * @param {{ critical?: number, high?: number, medium?: number }} [thresholds]
+ *   Optional org-level threshold overrides. Defaults: critical=80, high=60, medium=40.
+ * @returns {{ tier: string, color: string, bg: string, border: string, badge: string, bar: string }}
  */
-export function getRiskTier(score) {
-  if (score >= 80) {
-    return {
-      tier: 'Critical',
-      color: 'text-red-800',
-      bg: 'bg-red-50',
-      border: 'border-red-200',
-      badge: 'bg-red-600 text-white',
-    };
-  }
-  if (score >= 60) {
-    return {
-      tier: 'High',
-      color: 'text-orange-800',
-      bg: 'bg-orange-50',
-      border: 'border-orange-200',
-      badge: 'bg-orange-500 text-white',
-    };
-  }
-  if (score >= 40) {
-    return {
-      tier: 'Medium',
-      color: 'text-yellow-800',
-      bg: 'bg-yellow-50',
-      border: 'border-yellow-200',
-      badge: 'bg-yellow-400 text-yellow-900',
-    };
-  }
-  return {
-    tier: 'Low',
-    color: 'text-green-800',
-    bg: 'bg-green-50',
-    border: 'border-green-200',
-    badge: 'bg-green-500 text-white',
-  };
+export function getRiskTier(score, thresholds = {}) {
+  const critical = thresholds.critical ?? 80;
+  const high     = thresholds.high     ?? 60;
+  const medium   = thresholds.medium   ?? 40;
+
+  const tier = score >= critical ? 'Critical'
+             : score >= high     ? 'High'
+             : score >= medium   ? 'Medium'
+             : 'Low';
+
+  return { tier, ...TIER_COLORS[tier] };
+}
+
+/**
+ * Resolve scoring weights using the priority order:
+ *   savedWeights (user's persisted record) → orgDefaultWeights → DEFAULT_WEIGHTS
+ *
+ * @param {object|null} savedWeights      - User's scoring_weights PocketBase record (or null)
+ * @param {object|null} orgDefaultWeights - Org-level default weights from org_settings (or null)
+ * @returns {object} Resolved integer weight map guaranteed to sum to 100
+ */
+export function resolveWeights(savedWeights, orgDefaultWeights) {
+  if (savedWeights) return savedWeights;
+  if (orgDefaultWeights) return { ...orgDefaultWeights };
+  return { ...DEFAULT_WEIGHTS };
 }
 
 /**
  * Score and annotate a vulnerability object.
  * Returns a new object with compositeScore and riskTier added.
  *
- * @param {object} vuln        - Raw vulnerability data
- * @param {object} [weights]   - Integer weight map (default: DEFAULT_WEIGHTS)
+ * @param {object} vuln          - Raw vulnerability data
+ * @param {object} [weights]     - Integer weight map (default: DEFAULT_WEIGHTS)
+ * @param {object} [thresholds]  - Risk tier thresholds (default: 80/60/40)
  */
-export function scoreVulnerability(vuln, weights = DEFAULT_WEIGHTS) {
+export function scoreVulnerability(vuln, weights = DEFAULT_WEIGHTS, thresholds = {}) {
   const compositeScore = calculateCompositeScore(vuln, weights);
-  const riskTier = getRiskTier(compositeScore);
+  const riskTier = getRiskTier(compositeScore, thresholds);
   return {
     ...vuln,
     compositeScore,

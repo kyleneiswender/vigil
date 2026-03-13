@@ -251,20 +251,40 @@ export async function removeUser(userId, organizationId) {
 /**
  * Fetch the org_settings record for the given organization.
  * Returns null if no record exists yet (first-time use).
+ * Maps threshold and defaultWeights fields with hardcoded fallbacks so callers
+ * always receive normalised values regardless of DB state.
  */
 export async function fetchOrgSettings(organizationId) {
   const items = await pb.collection('org_settings').getFullList({
     filter:     `organization = "${organizationId}"`,
     requestKey: null,
   });
-  return items[0] ?? null;
+  const record = items[0] ?? null;
+  if (!record) return null;
+  return {
+    ...record,
+    criticalThreshold: record.criticalThreshold ?? 80,
+    highThreshold:     record.highThreshold     ?? 60,
+    mediumThreshold:   record.mediumThreshold   ?? 40,
+    defaultWeights: {
+      cvss:           record.defaultWeightCvss           ?? 20,
+      criticality:    record.defaultWeightCriticality    ?? 25,
+      assetCount:     record.defaultWeightAssetCount     ?? 15,
+      exposure:       record.defaultWeightExposure       ?? 15,
+      exploitability: record.defaultWeightExploitability ?? 10,
+      epss:           record.defaultWeightEpss           ?? 10,
+      days:           record.defaultWeightDays           ?? 5,
+    },
+  };
 }
 
 /**
  * Upsert the org_settings record for an organization.
  * Creates the record if it doesn't exist, updates it if it does.
  * @param {string} organizationId
- * @param {object} settings  - { nvd_api_key?, lastKevSync? }
+ * @param {object} settings  - { nvd_api_key?, lastKevSync?,
+ *                               criticalThreshold?, highThreshold?, mediumThreshold?,
+ *                               defaultWeightCvss?, … defaultWeightDays? }
  */
 export async function updateOrgSettings(organizationId, settings) {
   const existing = await fetchOrgSettings(organizationId);
@@ -274,9 +294,84 @@ export async function updateOrgSettings(organizationId, settings) {
     nvd_api_key:        settings.nvd_api_key        ?? existing?.nvd_api_key        ?? '',
     defaultFeedsSeeded: settings.defaultFeedsSeeded ?? existing?.defaultFeedsSeeded ?? false,
   };
-  if (settings.lastKevSync !== undefined) data.lastKevSync = settings.lastKevSync;
+  if (settings.lastKevSync               !== undefined) data.lastKevSync               = settings.lastKevSync;
+  if (settings.criticalThreshold         !== undefined) data.criticalThreshold         = settings.criticalThreshold;
+  if (settings.highThreshold             !== undefined) data.highThreshold             = settings.highThreshold;
+  if (settings.mediumThreshold           !== undefined) data.mediumThreshold           = settings.mediumThreshold;
+  if (settings.defaultWeightCvss         !== undefined) data.defaultWeightCvss         = settings.defaultWeightCvss;
+  if (settings.defaultWeightCriticality  !== undefined) data.defaultWeightCriticality  = settings.defaultWeightCriticality;
+  if (settings.defaultWeightAssetCount   !== undefined) data.defaultWeightAssetCount   = settings.defaultWeightAssetCount;
+  if (settings.defaultWeightExposure     !== undefined) data.defaultWeightExposure     = settings.defaultWeightExposure;
+  if (settings.defaultWeightExploitability !== undefined) data.defaultWeightExploitability = settings.defaultWeightExploitability;
+  if (settings.defaultWeightEpss         !== undefined) data.defaultWeightEpss         = settings.defaultWeightEpss;
+  if (settings.defaultWeightDays         !== undefined) data.defaultWeightDays         = settings.defaultWeightDays;
   if (existing) return pb.collection('org_settings').update(existing.id, data);
   return pb.collection('org_settings').create(data);
+}
+
+// ─── Scoring config validation ────────────────────────────────────────────────
+
+/**
+ * Validate risk tier thresholds.
+ * Constraints: critical > high > medium, medium ≥ 1, critical ≤ 99.
+ *
+ * @param {number} critical
+ * @param {number} high
+ * @param {number} medium
+ * @returns {{ valid: boolean, error: string|null }}
+ */
+export function validateThresholds(critical, high, medium) {
+  if (critical > 99)      return { valid: false, error: 'Critical threshold cannot exceed 99' };
+  if (medium < 1)         return { valid: false, error: 'Medium threshold must be at least 1' };
+  if (critical <= high)   return { valid: false, error: 'Critical threshold must be higher than High' };
+  if (high <= medium)     return { valid: false, error: 'High threshold must be higher than Medium' };
+  return { valid: true, error: null };
+}
+
+/**
+ * Validate org-level default scoring weights.
+ * All weights must be non-negative and sum to exactly 100.
+ *
+ * @param {object} weights - { cvss, criticality, assetCount, exposure, exploitability, epss, days }
+ * @returns {{ valid: boolean, error: string|null }}
+ */
+export function validateDefaultWeights(weights) {
+  if (Object.values(weights).some((v) => v < 0)) {
+    return { valid: false, error: 'Weights cannot be negative' };
+  }
+  const total = Object.values(weights).reduce((sum, v) => sum + v, 0);
+  if (total !== 100) {
+    return { valid: false, error: `Weights must sum to 100 (currently ${total})` };
+  }
+  return { valid: true, error: null };
+}
+
+/**
+ * Batch-update the riskTier field for vulnerabilities whose tier changed after a
+ * threshold configuration change. Writes a system-generated audit log entry for
+ * each updated record.
+ *
+ * @param {{ id: string, oldTier: string, newTier: string }[]} changes
+ * @param {string} organizationId
+ */
+export async function updateRiskTierBatch(changes, organizationId) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+  await Promise.all(changes.map(async ({ id, oldTier, newTier }) => {
+    try {
+      await pb.collection('vulnerabilities').update(id, { riskTier: newTier }, { requestKey: null });
+      await _writeVulnAudit({
+        vulnerability:   id,
+        action:          'update',
+        changedFields:   ['riskTier'],
+        previousValues:  { riskTier: oldTier },
+        newValues:       { riskTier: newTier },
+        organizationId:  effectiveOrgId,
+        systemGenerated: true,
+      });
+    } catch (err) {
+      console.error('[updateRiskTierBatch] failed to update tier for:', id, err);
+    }
+  }));
 }
 
 // ─── NVD lookup ───────────────────────────────────────────────────────────────

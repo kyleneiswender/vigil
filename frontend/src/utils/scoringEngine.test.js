@@ -11,7 +11,9 @@ import {
   getRiskTier,
   scoreVulnerability,
   redistributeWeights,
+  resolveWeights,
   DEFAULT_WEIGHTS,
+  TIER_COLORS,
 } from './scoringEngine.js';
 
 // ─── normalizeCvss ────────────────────────────────────────────────────────────
@@ -496,5 +498,142 @@ describe('calculateCompositeScore — KEV exploitability override', () => {
     const noKev  = calculateCompositeScore({ ...lowExploitVuln }, exploitOnlyWeights);
     const falseKev = calculateCompositeScore({ ...lowExploitVuln, isKev: false }, exploitOnlyWeights);
     expect(noKev).toBe(falseKev);
+  });
+});
+
+// ─── TIER_COLORS export ───────────────────────────────────────────────────────
+
+describe('TIER_COLORS', () => {
+  it('exports all four tiers', () => {
+    expect(Object.keys(TIER_COLORS)).toEqual(['Critical', 'High', 'Medium', 'Low']);
+  });
+
+  it('each tier has color, bg, border, badge, bar keys', () => {
+    ['Critical', 'High', 'Medium', 'Low'].forEach((tier) => {
+      expect(TIER_COLORS[tier]).toHaveProperty('color');
+      expect(TIER_COLORS[tier]).toHaveProperty('bg');
+      expect(TIER_COLORS[tier]).toHaveProperty('border');
+      expect(TIER_COLORS[tier]).toHaveProperty('badge');
+      expect(TIER_COLORS[tier]).toHaveProperty('bar');
+    });
+  });
+
+  it('Critical bar is bg-red-500', () => expect(TIER_COLORS.Critical.bar).toBe('bg-red-500'));
+  it('High bar is bg-orange-500', () => expect(TIER_COLORS.High.bar).toBe('bg-orange-500'));
+  it('Medium bar is bg-yellow-400', () => expect(TIER_COLORS.Medium.bar).toBe('bg-yellow-400'));
+  it('Low bar is bg-green-500', () => expect(TIER_COLORS.Low.bar).toBe('bg-green-500'));
+});
+
+// ─── getRiskTier — custom thresholds ─────────────────────────────────────────
+
+describe('getRiskTier — custom thresholds', () => {
+  it('uses default thresholds (80/60/40) when none provided', () => {
+    expect(getRiskTier(80).tier).toBe('Critical');
+    expect(getRiskTier(79).tier).toBe('High');
+    expect(getRiskTier(60).tier).toBe('High');
+    expect(getRiskTier(59).tier).toBe('Medium');
+    expect(getRiskTier(40).tier).toBe('Medium');
+    expect(getRiskTier(39).tier).toBe('Low');
+  });
+
+  it('uses custom critical threshold', () => {
+    expect(getRiskTier(70, { critical: 70, high: 50, medium: 30 }).tier).toBe('Critical');
+    expect(getRiskTier(69, { critical: 70, high: 50, medium: 30 }).tier).toBe('High');
+  });
+
+  it('uses custom high threshold', () => {
+    expect(getRiskTier(50, { critical: 90, high: 50, medium: 20 }).tier).toBe('High');
+    expect(getRiskTier(49, { critical: 90, high: 50, medium: 20 }).tier).toBe('Medium');
+  });
+
+  it('uses custom medium threshold', () => {
+    expect(getRiskTier(20, { critical: 90, high: 60, medium: 20 }).tier).toBe('Medium');
+    expect(getRiskTier(19, { critical: 90, high: 60, medium: 20 }).tier).toBe('Low');
+  });
+
+  it('returns TIER_COLORS fields alongside tier', () => {
+    const result = getRiskTier(85, { critical: 80, high: 60, medium: 40 });
+    expect(result.tier).toBe('Critical');
+    expect(result.bar).toBe(TIER_COLORS.Critical.bar);
+    expect(result.badge).toBe(TIER_COLORS.Critical.badge);
+  });
+
+  it('score exactly at critical boundary is Critical', () => {
+    expect(getRiskTier(75, { critical: 75, high: 50, medium: 25 }).tier).toBe('Critical');
+  });
+
+  it('score one below critical boundary is High', () => {
+    expect(getRiskTier(74, { critical: 75, high: 50, medium: 25 }).tier).toBe('High');
+  });
+
+  it('score 0 is always Low', () => {
+    expect(getRiskTier(0, { critical: 80, high: 60, medium: 40 }).tier).toBe('Low');
+  });
+
+  it('score 100 is always Critical', () => {
+    expect(getRiskTier(100, { critical: 80, high: 60, medium: 40 }).tier).toBe('Critical');
+  });
+});
+
+// ─── resolveWeights ───────────────────────────────────────────────────────────
+
+describe('resolveWeights', () => {
+  const customUser = { criticality: 30, cvss: 20, assetCount: 10, exposure: 10, exploitability: 15, epss: 10, days: 5 };
+  const customOrg  = { criticality: 20, cvss: 25, assetCount: 15, exposure: 15, exploitability: 10, epss: 10, days: 5 };
+
+  it('returns savedWeights when provided (highest priority)', () => {
+    expect(resolveWeights(customUser, customOrg)).toEqual(customUser);
+  });
+
+  it('returns orgDefaultWeights when savedWeights is null', () => {
+    expect(resolveWeights(null, customOrg)).toEqual(customOrg);
+  });
+
+  it('returns DEFAULT_WEIGHTS when both are null', () => {
+    expect(resolveWeights(null, null)).toEqual(DEFAULT_WEIGHTS);
+  });
+
+  it('returns DEFAULT_WEIGHTS when both are undefined', () => {
+    expect(resolveWeights(undefined, undefined)).toEqual(DEFAULT_WEIGHTS);
+  });
+
+  it('savedWeights takes priority over orgDefaultWeights even when org is also set', () => {
+    const result = resolveWeights(customUser, customOrg);
+    expect(result).not.toEqual(customOrg);
+    expect(result).toEqual(customUser);
+  });
+
+  it('returned DEFAULT_WEIGHTS is a copy, not the original object', () => {
+    const result = resolveWeights(null, null);
+    result.criticality = 999;
+    expect(DEFAULT_WEIGHTS.criticality).toBe(25);
+  });
+});
+
+// ─── scoreVulnerability — thresholds param ────────────────────────────────────
+
+describe('scoreVulnerability — thresholds param', () => {
+  const vuln = {
+    cvssScore: 7.5, assetCriticality: 'High', internetFacing: true,
+    exploitability: 'PoC Exists', daysSinceDiscovery: 30, affectedAssetCount: 10,
+    epssScore: 0.5, isKev: false,
+  };
+
+  it('riskTier reflects custom thresholds', () => {
+    // With custom thresholds where critical=50, a score in the 60s would be Critical
+    const result = scoreVulnerability(vuln, DEFAULT_WEIGHTS, { critical: 50, high: 30, medium: 15 });
+    expect(result.riskTier.tier).toBe('Critical');
+  });
+
+  it('riskTier uses default thresholds when not provided', () => {
+    const result = scoreVulnerability(vuln, DEFAULT_WEIGHTS);
+    const { tier } = getRiskTier(result.compositeScore);
+    expect(result.riskTier.tier).toBe(tier);
+  });
+
+  it('compositeScore is identical regardless of thresholds', () => {
+    const r1 = scoreVulnerability(vuln, DEFAULT_WEIGHTS, { critical: 80, high: 60, medium: 40 });
+    const r2 = scoreVulnerability(vuln, DEFAULT_WEIGHTS, { critical: 50, high: 30, medium: 15 });
+    expect(r1.compositeScore).toBe(r2.compositeScore);
   });
 });

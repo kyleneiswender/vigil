@@ -25,8 +25,9 @@ import {
   updateRssFeed,
   deleteRssFeed,
   fetchRssFeedContent,
+  updateRiskTierBatch,
 } from './lib/api.js';
-import { scoreVulnerability, DEFAULT_WEIGHTS } from './utils/scoringEngine';
+import { scoreVulnerability, DEFAULT_WEIGHTS, getRiskTier, resolveWeights } from './utils/scoringEngine';
 import {
   parseRssFeed,
   sortArticles,
@@ -56,9 +57,11 @@ export default function App() {
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [weights,         setWeights]         = useState({ ...DEFAULT_WEIGHTS });
   const [editingVuln,     setEditingVuln]     = useState(null);
-  const [showUserMgmt,    setShowUserMgmt]    = useState(false);
-  const [showSettings,    setShowSettings]    = useState(false);
-  const [orgSettings,     setOrgSettings]     = useState(null);
+  const [showUserMgmt,      setShowUserMgmt]      = useState(false);
+  const [showSettings,      setShowSettings]      = useState(false);
+  const [orgSettings,       setOrgSettings]       = useState(null);
+  const [riskThresholds,    setRiskThresholds]    = useState({ critical: 80, high: 60, medium: 40 });
+  const [orgDefaultWeights, setOrgDefaultWeights] = useState(null);
   const [rssFeeds,           setRssFeeds]           = useState([]);
   const [activeTab,          setActiveTab]          = useState('vulnerabilities');
   const [feedArticles,       setFeedArticles]       = useState([]);
@@ -144,7 +147,21 @@ export default function App() {
       setOrgSettings(settingsRecord);
       setRssFeeds(feedsData);
 
-      const resolvedWeights = weightsRecord
+      // Extract risk tier thresholds and org default weights from settings record
+      const resolvedThresholds = settingsRecord
+        ? {
+            critical: settingsRecord.criticalThreshold ?? 80,
+            high:     settingsRecord.highThreshold     ?? 60,
+            medium:   settingsRecord.mediumThreshold   ?? 40,
+          }
+        : { critical: 80, high: 60, medium: 40 };
+      setRiskThresholds(resolvedThresholds);
+
+      const resolvedOrgDefaultWeights = settingsRecord?.defaultWeights ?? null;
+      setOrgDefaultWeights(resolvedOrgDefaultWeights);
+
+      // Weight priority: user's saved scoring_weights > org defaults > hardcoded DEFAULT_WEIGHTS
+      const savedWeightsObj = weightsRecord
         ? {
             cvss:           weightsRecord.cvss,
             criticality:    weightsRecord.criticality,
@@ -154,11 +171,12 @@ export default function App() {
             epss:           weightsRecord.epss ?? 10,
             days:           weightsRecord.days,
           }
-        : { ...DEFAULT_WEIGHTS };
+        : null;
+      const resolvedWeights = resolveWeights(savedWeightsObj, resolvedOrgDefaultWeights);
 
       setWeights(resolvedWeights);
-      // Re-score on load to keep scores consistent with current weights
-      const scoredRecords = records.map((r) => scoreVulnerability(r, resolvedWeights));
+      // Re-score on load to keep scores consistent with current weights and thresholds
+      const scoredRecords = records.map((r) => scoreVulnerability(r, resolvedWeights, resolvedThresholds));
       setVulnerabilities(scoredRecords);
 
       // Auto-sync KEV feed in the background if never synced or last sync > 24 hours ago
@@ -169,7 +187,7 @@ export default function App() {
           .then(async (result) => {
             if (!result.error) {
               const fresh = await fetchVulnerabilities(orgId);
-              setVulnerabilities(fresh.map((r) => scoreVulnerability(r, resolvedWeights)));
+              setVulnerabilities(fresh.map((r) => scoreVulnerability(r, resolvedWeights, resolvedThresholds)));
               setOrgSettings((prev) => ({ ...prev, lastKevSync: result.lastSync }));
             }
           })
@@ -202,10 +220,10 @@ export default function App() {
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
   async function handleAdd(vuln) {
-    const scored = scoreVulnerability(vuln, weights);
+    const scored = scoreVulnerability(vuln, weights, riskThresholds);
     try {
       const record = await createVulnerability(scored, organizationIdRef.current);
-      const newVuln = scoreVulnerability(record, weights);
+      const newVuln = scoreVulnerability(record, weights, riskThresholds);
       setVulnerabilities((prev) => [newVuln, ...prev]);
 
       // Check the new CVE against the KEV catalog in the background
@@ -213,7 +231,7 @@ export default function App() {
         .then(async (result) => {
           if (!result.error && result.newMatches.length > 0) {
             const fresh = await fetchVulnerabilities(organizationIdRef.current);
-            setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights)));
+            setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights, riskThresholds)));
             setOrgSettings((prev) => ({ ...prev, lastKevSync: result.lastSync }));
           }
         })
@@ -233,12 +251,12 @@ export default function App() {
   }
 
   async function handleImport(records) {
-    const scored = records.map((r) => scoreVulnerability(r, weights));
+    const scored = records.map((r) => scoreVulnerability(r, weights, riskThresholds));
     try {
       const saved = await Promise.all(
         scored.map((r) => createVulnerability(r, organizationIdRef.current))
       );
-      const newVulns = saved.map((r) => scoreVulnerability(r, weights));
+      const newVulns = saved.map((r) => scoreVulnerability(r, weights, riskThresholds));
       setVulnerabilities((prev) => [...newVulns, ...prev]);
 
       // Check all newly imported CVEs against the KEV catalog in the background
@@ -246,7 +264,7 @@ export default function App() {
         .then(async (result) => {
           if (!result.error && result.newMatches.length > 0) {
             const fresh = await fetchVulnerabilities(organizationIdRef.current);
-            setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights)));
+            setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights, riskThresholds)));
             setOrgSettings((prev) => ({ ...prev, lastKevSync: result.lastSync }));
           }
         })
@@ -258,7 +276,7 @@ export default function App() {
 
   async function handleWeightsChange(newWeights) {
     setWeights(newWeights);
-    setVulnerabilities((prev) => prev.map((v) => scoreVulnerability(v, newWeights)));
+    setVulnerabilities((prev) => prev.map((v) => scoreVulnerability(v, newWeights, riskThresholds)));
     try {
       await updateScoringWeights(organizationIdRef.current, newWeights);
     } catch (err) {
@@ -285,11 +303,11 @@ export default function App() {
   }
 
   async function handleEditSave(id, updatedFields) {
-    const scored = scoreVulnerability(updatedFields, weights);
+    const scored = scoreVulnerability(updatedFields, weights, riskThresholds);
     try {
       const record = await updateVulnerability(id, scored, organizationIdRef.current);
       setVulnerabilities((prev) =>
-        prev.map((v) => (v.id === id ? scoreVulnerability(record, weights) : v))
+        prev.map((v) => (v.id === id ? scoreVulnerability(record, weights, riskThresholds) : v))
       );
       setEditingVuln(null);
     } catch (err) {
@@ -301,10 +319,33 @@ export default function App() {
     const result = await syncKevFeed(vulnerabilities, organizationIdRef.current);
     if (!result.error) {
       const fresh = await fetchVulnerabilities(organizationIdRef.current);
-      setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights)));
+      setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights, riskThresholds)));
       setOrgSettings((prev) => ({ ...prev, lastKevSync: result.lastSync }));
     }
     return result;
+  }
+
+  // Re-evaluate risk tiers for all loaded vulns using new thresholds (composite scores unchanged).
+  // Updates PocketBase for any records whose tier label changed.
+  function handleThresholdsSaved(newThresholds) {
+    setRiskThresholds(newThresholds);
+    const changes = [];
+    const updated = vulnerabilities.map((vuln) => {
+      const newRiskTier = getRiskTier(vuln.compositeScore ?? 0, newThresholds);
+      const oldTier = vuln.riskTier?.tier ?? vuln.riskTier;
+      if (oldTier !== newRiskTier.tier) {
+        changes.push({ id: vuln.id, oldTier, newTier: newRiskTier.tier });
+      }
+      return { ...vuln, riskTier: newRiskTier };
+    });
+    setVulnerabilities(updated);
+    if (changes.length > 0) {
+      updateRiskTierBatch(changes, organizationIdRef.current).catch(() => {});
+    }
+  }
+
+  function handleDefaultWeightsSaved(newDefaultWeights) {
+    setOrgDefaultWeights(newDefaultWeights);
   }
 
   async function handleAddFeed(name, url) {
@@ -429,6 +470,8 @@ export default function App() {
     setVulnerabilities([]);
     setWeights({ ...DEFAULT_WEIGHTS });
     setOrgSettings(null);
+    setRiskThresholds({ critical: 80, high: 60, medium: 40 });
+    setOrgDefaultWeights(null);
     setRssFeeds([]);
     setActiveTab('vulnerabilities');
     setFeedArticles([]);
@@ -591,10 +634,10 @@ export default function App() {
               <span>EPSS {weights.epss}%</span>
               <span>Age {weights.days}%</span>
               <span className="ml-auto flex items-center gap-3 font-medium">
-                <Pill color="bg-red-600 text-white">Critical 80–100</Pill>
-                <Pill color="bg-orange-500 text-white">High 60–79</Pill>
-                <Pill color="bg-yellow-400 text-yellow-900">Medium 40–59</Pill>
-                <Pill color="bg-green-500 text-white">Low 0–39</Pill>
+                <Pill color="bg-red-600 text-white">Critical {riskThresholds.critical}–100</Pill>
+                <Pill color="bg-orange-500 text-white">High {riskThresholds.high}–{riskThresholds.critical - 1}</Pill>
+                <Pill color="bg-yellow-400 text-yellow-900">Medium {riskThresholds.medium}–{riskThresholds.high - 1}</Pill>
+                <Pill color="bg-green-500 text-white">Low 0–{riskThresholds.medium - 1}</Pill>
               </span>
             </div>
           </div>
@@ -607,7 +650,7 @@ export default function App() {
           <CsvImport    onImport={handleImport} />
           <VulnForm     onAdd={handleAdd} nvdApiKey={orgSettings?.nvd_api_key ?? ''} prefilledCveId={prefilledCveId} onPrefillConsumed={() => setPrefilledCveId(null)} />
           <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
-          <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} onEdit={(vuln) => setEditingVuln(vuln)} weights={weights} />
+          <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} onEdit={(vuln) => setEditingVuln(vuln)} weights={weights} riskThresholds={riskThresholds} />
         </main>
       )}
       {activeTab === 'intelligence' && (
@@ -653,6 +696,10 @@ export default function App() {
           onAddFeed={handleAddFeed}
           onDeleteFeed={handleDeleteFeed}
           onToggleFeed={handleToggleFeed}
+          riskThresholds={riskThresholds}
+          orgDefaultWeights={orgDefaultWeights}
+          onThresholdsSaved={handleThresholdsSaved}
+          onDefaultWeightsSaved={handleDefaultWeightsSaved}
         />
       )}
     </div>
