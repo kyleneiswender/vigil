@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getRiskTier, TIER_COLORS, VULNERABILITY_STATUSES, CLOSED_STATUSES } from '../utils/scoringEngine';
 import { filterVulns, sortVulns } from '../utils/filterSort';
 import { exportCSV, exportPDF, formatDate } from '../utils/exportUtils';
@@ -123,91 +123,193 @@ function SortIcon({ colKey, sortKey, sortDir }) {
   );
 }
 
-// ─── Filter bar ───────────────────────────────────────────────────────────────
+// ─── Filter popover + chips ───────────────────────────────────────────────────
 
-const fSelectClass = 'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+const fSelectClass = 'w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+const fLabelClass  = 'block text-xs font-medium text-gray-500 mb-1';
 
-function FilterBar({ filters, onChange, onClear, hasFilters, vulnerabilities }) {
+function chipLabel(key, value) {
+  switch (key) {
+    case 'search':          return `"${value}"`;
+    case 'riskTier':        return `Tier: ${value}`;
+    case 'assetCriticality':return `Criticality: ${value}`;
+    case 'internetFacing':  return value === 'yes' ? 'Internet Facing' : 'Internal Only';
+    case 'groupName':       return `Group: ${value}`;
+    case 'assignedTo':      return value === '__unassigned__' ? 'Unassigned' : `User: ${value}`;
+    case 'kev':             return value === 'kev_only' ? 'KEV Only' : 'Non-KEV';
+    case 'status':          return value === 'all' ? 'All Statuses' : `Status: ${value}`;
+    default:                return value;
+  }
+}
+
+function FiltersBar({ filters, onChange, onClear, activeFilterCount, vulnerabilities }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
   const groupOptions = [...new Set(vulnerabilities.map((v) => v.groupName).filter(Boolean))].sort();
   const userOptions  = [...new Set(vulnerabilities.map((v) => v.assignedToEmail).filter(Boolean))].sort();
 
+  // Close popover on outside click
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  const activeChips = Object.entries(filters).filter(([k, v]) =>
+    k === 'status' ? v !== 'active' : Boolean(v)
+  );
+
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-6 py-3">
-      {/* Text search */}
-      <div className="relative">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
-          className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400">
-          <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clipRule="evenodd" />
-        </svg>
-        <input
-          type="text"
-          placeholder="Search CVE ID or title…"
-          value={filters.search}
-          onChange={(e) => onChange('search', e.target.value)}
-          className="rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-[200px]"
-        />
+    <div className="border-b border-gray-200 bg-gray-50 px-6 py-2.5 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Filters button */}
+        <div className="relative" ref={ref}>
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition-colors ${
+              activeFilterCount > 0
+                ? 'border-blue-400 bg-blue-600 text-white hover:bg-blue-700'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+              <path fillRule="evenodd" d="M2.628 1.601C5.028 1.206 7.49 1 10 1s4.973.206 7.372.601a.75.75 0 0 1 .628.74v2.288a2.25 2.25 0 0 1-.659 1.59l-4.682 4.683a2.25 2.25 0 0 0-.659 1.59v3.037c0 .684-.31 1.33-.844 1.757l-1.937 1.55A.75.75 0 0 1 8 18.25v-5.757a2.25 2.25 0 0 0-.659-1.591L2.659 6.22A2.25 2.25 0 0 1 2 4.629V2.34a.75.75 0 0 1 .628-.74Z" clipRule="evenodd" />
+            </svg>
+            Filters{activeFilterCount > 0 && ` (${activeFilterCount})`}
+          </button>
+
+          {open && (
+            <div className="absolute z-30 left-0 top-full mt-1 w-96 rounded-xl border border-gray-200 bg-white shadow-xl">
+              <div className="px-4 pt-4 pb-3 space-y-3">
+                {/* Search */}
+                <div className="col-span-2">
+                  <label className={fLabelClass}>Search</label>
+                  <div className="relative">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+                      className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400">
+                      <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clipRule="evenodd" />
+                    </svg>
+                    <input
+                      type="text"
+                      placeholder="CVE ID or title…"
+                      value={filters.search}
+                      onChange={(e) => onChange('search', e.target.value)}
+                      className="w-full rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Grid of selects */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={fLabelClass}>Risk Tier</label>
+                    <select value={filters.riskTier} onChange={(e) => onChange('riskTier', e.target.value)} className={fSelectClass}>
+                      <option value="">All Tiers</option>
+                      <option value="Critical">Critical</option>
+                      <option value="High">High</option>
+                      <option value="Medium">Medium</option>
+                      <option value="Low">Low</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={fLabelClass}>Asset Criticality</label>
+                    <select value={filters.assetCriticality} onChange={(e) => onChange('assetCriticality', e.target.value)} className={fSelectClass}>
+                      <option value="">All</option>
+                      <option value="Critical">Critical</option>
+                      <option value="High">High</option>
+                      <option value="Medium">Medium</option>
+                      <option value="Low">Low</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={fLabelClass}>Internet Exposure</label>
+                    <select value={filters.internetFacing} onChange={(e) => onChange('internetFacing', e.target.value)} className={fSelectClass}>
+                      <option value="">All</option>
+                      <option value="yes">Internet Facing</option>
+                      <option value="no">Internal Only</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={fLabelClass}>KEV</label>
+                    <select value={filters.kev} onChange={(e) => onChange('kev', e.target.value)} className={fSelectClass}>
+                      <option value="">All</option>
+                      <option value="kev_only">KEV Only</option>
+                      <option value="non_kev">Non-KEV</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={fLabelClass}>Group</label>
+                    <select value={filters.groupName} onChange={(e) => onChange('groupName', e.target.value)} className={fSelectClass}>
+                      <option value="">All Groups</option>
+                      {groupOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={fLabelClass}>Assigned To</label>
+                    <select value={filters.assignedTo} onChange={(e) => onChange('assignedTo', e.target.value)} className={fSelectClass}>
+                      <option value="">All Users</option>
+                      <option value="__unassigned__">Unassigned</option>
+                      {userOptions.map((email) => <option key={email} value={email}>{email}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Status spans full width */}
+                <div>
+                  <label className={fLabelClass}>Status</label>
+                  <select value={filters.status} onChange={(e) => onChange('status', e.target.value)} className={fSelectClass}>
+                    <option value="active">Active Only</option>
+                    <option value="all">All Statuses</option>
+                    {VULNERABILITY_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Popover footer */}
+              <div className="border-t border-gray-100 px-4 py-2.5 flex justify-between items-center">
+                <button
+                  type="button"
+                  onClick={() => { onClear(); setOpen(false); }}
+                  className="text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                >
+                  Clear all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Active filter chips */}
+        {activeChips.map(([key, value]) => (
+          <span
+            key={key}
+            className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700"
+          >
+            {chipLabel(key, value)}
+            <button
+              type="button"
+              onClick={() => onChange(key, key === 'status' ? 'active' : '')}
+              className="ml-0.5 rounded-full text-blue-500 hover:text-blue-700 transition-colors"
+              aria-label={`Remove ${key} filter`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+                <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z" />
+              </svg>
+            </button>
+          </span>
+        ))}
       </div>
-
-      <select value={filters.riskTier} onChange={(e) => onChange('riskTier', e.target.value)} className={fSelectClass}>
-        <option value="">All Tiers</option>
-        <option value="Critical">Critical</option>
-        <option value="High">High</option>
-        <option value="Medium">Medium</option>
-        <option value="Low">Low</option>
-      </select>
-
-      <select value={filters.assetCriticality} onChange={(e) => onChange('assetCriticality', e.target.value)} className={fSelectClass}>
-        <option value="">All Criticality</option>
-        <option value="Critical">Critical</option>
-        <option value="High">High</option>
-        <option value="Medium">Medium</option>
-        <option value="Low">Low</option>
-      </select>
-
-      <select value={filters.internetFacing} onChange={(e) => onChange('internetFacing', e.target.value)} className={fSelectClass}>
-        <option value="">All Exposure</option>
-        <option value="yes">Internet Facing</option>
-        <option value="no">Internal Only</option>
-      </select>
-
-      <select value={filters.groupName} onChange={(e) => onChange('groupName', e.target.value)} className={fSelectClass}>
-        <option value="">All Groups</option>
-        {groupOptions.map((name) => (
-          <option key={name} value={name}>{name}</option>
-        ))}
-      </select>
-
-      <select value={filters.assignedTo} onChange={(e) => onChange('assignedTo', e.target.value)} className={fSelectClass}>
-        <option value="">All Users</option>
-        <option value="__unassigned__">Unassigned</option>
-        {userOptions.map((email) => (
-          <option key={email} value={email}>{email}</option>
-        ))}
-      </select>
-
-      <select value={filters.kev} onChange={(e) => onChange('kev', e.target.value)} className={fSelectClass}>
-        <option value="">All (KEV + Non-KEV)</option>
-        <option value="kev_only">KEV Only</option>
-        <option value="non_kev">Non-KEV</option>
-      </select>
-
-      <select value={filters.status} onChange={(e) => onChange('status', e.target.value)} className={fSelectClass}>
-        <option value="active">Active Only</option>
-        <option value="all">All Statuses</option>
-        {VULNERABILITY_STATUSES.map((s) => (
-          <option key={s} value={s}>{s}</option>
-        ))}
-      </select>
-
-      {hasFilters && (
-        <button type="button" onClick={onClear}
-          className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 shadow-sm hover:bg-gray-100 transition-colors">
-          Clear filters
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5">
-            <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22z" />
-          </svg>
-        </button>
-      )}
     </div>
   );
 }
@@ -237,9 +339,10 @@ export default function VulnTable({
   const [bulkUserId,  setBulkUserId]  = useState('');
   const [bulkApplying, setBulkApplying] = useState(false);
 
-  const filtered   = filterVulns(vulnerabilities, filters);
-  const sorted     = sortVulns(filtered, sortKey, sortDir);
-  const hasFilters = Object.entries(filters).some(([k, v]) => k === 'status' ? v !== 'active' : Boolean(v));
+  const filtered          = filterVulns(vulnerabilities, filters);
+  const sorted            = sortVulns(filtered, sortKey, sortDir);
+  const activeFilterCount = Object.entries(filters).filter(([k, v]) => k === 'status' ? v !== 'active' : Boolean(v)).length;
+  const hasFilters        = activeFilterCount > 0;
 
   const allVisibleSelected  = sorted.length > 0 && sorted.every((v) => selectedVulnIds.has(v.id));
   const someVisibleSelected = !allVisibleSelected && sorted.some((v) => selectedVulnIds.has(v.id));
@@ -553,8 +656,8 @@ export default function VulnTable({
         </div>
       )}
 
-      {/* ── Filter bar ── */}
-      <FilterBar filters={filters} onChange={handleFilterChange} onClear={clearFilters} hasFilters={hasFilters} vulnerabilities={vulnerabilities} />
+      {/* ── Filters ── */}
+      <FiltersBar filters={filters} onChange={handleFilterChange} onClear={clearFilters} activeFilterCount={activeFilterCount} vulnerabilities={vulnerabilities} />
 
       {/* ── Table ── */}
       <div className="overflow-x-auto">

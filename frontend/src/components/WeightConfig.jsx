@@ -33,7 +33,7 @@ export default function WeightConfig({ weights, onWeightsChange }) {
         aria-expanded={open}
       >
         <div className="flex items-center gap-3">
-          <span className="text-lg font-semibold text-gray-900">Scoring Configuration</span>
+          <span className="text-lg font-semibold text-gray-900">Risk Lens</span>
           {!isDefault && (
             <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
               customised

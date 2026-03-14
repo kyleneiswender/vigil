@@ -665,7 +665,7 @@ export default function App() {
   // ── Render: main app ─────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100 flex flex-col">
       {/* ── Header ── */}
       <header className="bg-white border-b border-gray-200 shadow-sm">
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
@@ -677,8 +677,8 @@ export default function App() {
                 </svg>
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.9.3 &mdash; Duplicate CVE detection</p>
+                <h1 className="font-display text-xl font-bold text-gray-900 tracking-tight">Vigil</h1>
+                <p className="text-xs text-gray-400">Vulnerability intelligence for lean security teams</p>
               </div>
             </div>
 
@@ -709,15 +709,6 @@ export default function App() {
                   className="rounded-md border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 hover:border-blue-300 transition-colors"
                 >
                   Manage Users
-                </button>
-              )}
-              {/* Clear all */}
-              {vulnerabilities.length > 0 && (
-                <button
-                  onClick={handleClearAll}
-                  className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 hover:border-red-300 transition-colors"
-                >
-                  Clear All
                 </button>
               )}
               {/* Logout */}
@@ -752,30 +743,6 @@ export default function App() {
           </nav>
         </div>
       </div>
-
-      {/* ── Tier / weight legend (Vulnerabilities tab only) ── */}
-      {activeTab === 'vulnerabilities' && (
-        <div className="bg-blue-50 border-b border-blue-100">
-          <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6 lg:px-8">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-blue-700">
-              <span className="font-semibold">Score weights:</span>
-              <span>Criticality {weights.criticality}%</span>
-              <span>CVSS {weights.cvss}%</span>
-              <span>Asset Count {weights.assetCount}%</span>
-              <span>Exposure {weights.exposure}%</span>
-              <span>Exploitability {weights.exploitability}%</span>
-              <span>EPSS {weights.epss}%</span>
-              <span>Age {weights.days}%</span>
-              <span className="ml-auto flex items-center gap-3 font-medium">
-                <Pill color="bg-red-600 text-white">Critical {riskThresholds.critical}–100</Pill>
-                <Pill color="bg-orange-500 text-white">High {riskThresholds.high}–{riskThresholds.critical - 1}</Pill>
-                <Pill color="bg-yellow-400 text-yellow-900">Medium {riskThresholds.medium}–{riskThresholds.high - 1}</Pill>
-                <Pill color="bg-green-500 text-white">Low 0–{riskThresholds.medium - 1}</Pill>
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Tab content ── */}
       {activeTab === 'vulnerabilities' && (
@@ -863,6 +830,13 @@ export default function App() {
         />
       )}
 
+      {/* ── Footer ── */}
+      <footer className="mt-auto border-t border-gray-200 bg-white">
+        <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6 lg:px-8 flex items-center justify-between">
+          <span className="font-display text-xs font-semibold text-gray-300">Vigil v1.0.0</span>
+        </div>
+      </footer>
+
       {showSettings && (
         <SettingsPanel
           organizationId={organizationIdRef.current}
@@ -880,17 +854,10 @@ export default function App() {
           onDefaultWeightsSaved={handleDefaultWeightsSaved}
           catAnimationEnabled={catAnimationEnabled}
           onCatAnimationToggle={handleCatAnimationToggle}
+          onClearAll={handleClearAll}
         />
       )}
     </div>
-  );
-}
-
-function Pill({ color, children }) {
-  return (
-    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${color}`}>
-      {children}
-    </span>
   );
 }
 

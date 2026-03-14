@@ -123,6 +123,7 @@ export default function SettingsPanel({
   onDefaultWeightsSaved,
   catAnimationEnabled = true,
   onCatAnimationToggle,
+  onClearAll,
 }) {
   const [nvdKey,      setNvdKey]      = useState('');
   const [showKey,     setShowKey]     = useState(false);
@@ -814,6 +815,32 @@ export default function SettingsPanel({
             </div>
           </label>
         </SettingsSection>
+
+        {/* ── Data Management (admin only) ── */}
+        {currentUser?.role === 'admin' && (
+          <SettingsSection title="Data Management" description="Irreversible operations that affect all organization data.">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Clear all vulnerability data</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Permanently deletes every vulnerability record in your organization. This cannot be undone.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { onClearAll?.(); }}
+                className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 hover:border-red-400 transition-colors"
+              >
+                Clear All Data
+              </button>
+            </div>
+          </SettingsSection>
+        )}
+
+        {/* ── Version ── */}
+        <div className="pt-2 pb-4 text-center">
+          <span className="font-display text-xs font-semibold text-gray-300">Vigil v1.0.0</span>
+        </div>
       </div>
     </div>
   );

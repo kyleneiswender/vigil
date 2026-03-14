@@ -38,6 +38,7 @@ const btnSecondary =
  */
 export default function CsvImport({ onImport, existingVulnerabilities = [] }) {
   const [step, setStep] = useState(STEP.IDLE);
+  const [open, setOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [parseError, setParseError] = useState(null);
   const [parsedData, setParsedData] = useState(null);   // { headers, rows }
@@ -46,6 +47,10 @@ export default function CsvImport({ onImport, existingVulnerabilities = [] }) {
   const [importCount, setImportCount] = useState(0);
 
   const fileInputRef = useRef(null);
+
+  // Auto-expand when an import is in progress
+  const isActive = step !== STEP.IDLE;
+  const expanded = open || isActive;
 
   // ── File ingestion ──────────────────────────────────────────────────────────
 
@@ -117,6 +122,7 @@ export default function CsvImport({ onImport, existingVulnerabilities = [] }) {
 
   function reset() {
     setStep(STEP.IDLE);
+    setOpen(false);
     setParsedData(null);
     setMapping({});
     setValidationResult(null);
@@ -129,49 +135,77 @@ export default function CsvImport({ onImport, existingVulnerabilities = [] }) {
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="border-b border-gray-200 px-6 py-4">
-        <h2 className="text-lg font-semibold text-gray-900">CSV Import</h2>
-        <p className="mt-0.5 text-sm text-gray-500">
-          Bulk-import vulnerabilities from a CSV export (Qualys, Tenable, etc.)
-        </p>
-      </div>
-
-      <div className="px-6 py-5">
-        {step === STEP.IDLE && (
-          <DropZone
-            isDragging={isDragging}
-            setIsDragging={setIsDragging}
-            onDrop={handleDrop}
-            onFileInput={handleFileInput}
-            fileInputRef={fileInputRef}
-            parseError={parseError}
-          />
+      {/* ── Compact header / toggle bar ── */}
+      <button
+        type="button"
+        onClick={() => !isActive && setOpen((o) => !o)}
+        className={`flex w-full items-center justify-between px-6 py-3.5 text-left transition-colors ${
+          isActive ? 'cursor-default' : 'hover:bg-gray-50'
+        }`}
+        aria-expanded={expanded}
+      >
+        <div className="flex items-center gap-2.5">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+            className="h-4 w-4 shrink-0 text-gray-400">
+            <path fillRule="evenodd" d="M1 3.75A.75.75 0 0 1 1.75 3h16.5a.75.75 0 0 1 0 1.5H1.75A.75.75 0 0 1 1 3.75Zm0 4.167a.75.75 0 0 1 .75-.75h16.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1-.75-.75Zm0 4.166a.75.75 0 0 1 .75-.75h16.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1-.75-.75Zm0 4.167a.75.75 0 0 1 .75-.75H10a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
+          </svg>
+          <span className="text-sm font-semibold text-gray-800">Import CSV</span>
+          {isActive && step !== STEP.DONE && (
+            <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+              {step === STEP.PREVIEW ? 'mapping' : 'validating'}
+            </span>
+          )}
+          {!expanded && (
+            <span className="text-xs text-gray-400">Bulk-import from Qualys, Tenable, or any CSV</span>
+          )}
+        </div>
+        {!isActive && (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+            className={`h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}>
+            <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06z" clipRule="evenodd" />
+          </svg>
         )}
+      </button>
 
-        {step === STEP.PREVIEW && (
-          <PreviewAndMapping
-            parsedData={parsedData}
-            mapping={mapping}
-            setMapping={setMapping}
-            onConfirm={handleConfirmMapping}
-            onCancel={reset}
-          />
-        )}
+      {/* ── Expanded body ── */}
+      {expanded && (
+        <div className="border-t border-gray-200 px-6 py-5">
+          {step === STEP.IDLE && (
+            <DropZone
+              isDragging={isDragging}
+              setIsDragging={setIsDragging}
+              onDrop={handleDrop}
+              onFileInput={handleFileInput}
+              fileInputRef={fileInputRef}
+              parseError={parseError}
+            />
+          )}
 
-        {step === STEP.VALIDATE && (
-          <ValidationSummary
-            result={validationResult}
-            existingVulnerabilities={existingVulnerabilities}
-            onImport={handleFinalImport}
-            onBack={() => setStep(STEP.PREVIEW)}
-            onCancel={reset}
-          />
-        )}
+          {step === STEP.PREVIEW && (
+            <PreviewAndMapping
+              parsedData={parsedData}
+              mapping={mapping}
+              setMapping={setMapping}
+              onConfirm={handleConfirmMapping}
+              onCancel={reset}
+            />
+          )}
 
-        {step === STEP.DONE && (
-          <SuccessMessage count={importCount} onReset={reset} />
-        )}
-      </div>
+          {step === STEP.VALIDATE && (
+            <ValidationSummary
+              result={validationResult}
+              existingVulnerabilities={existingVulnerabilities}
+              onImport={handleFinalImport}
+              onBack={() => setStep(STEP.PREVIEW)}
+              onCancel={reset}
+            />
+          )}
+
+          {step === STEP.DONE && (
+            <SuccessMessage count={importCount} onReset={reset} />
+          )}
+        </div>
+      )}
     </div>
   );
 }

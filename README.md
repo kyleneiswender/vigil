@@ -1,4 +1,4 @@
-# Vulnerability Prioritization Tool
+# Vigil — Vulnerability Intelligence
 
 A self-hosted web application for triaging and prioritising security vulnerabilities using a configurable composite scoring model.
 
@@ -13,10 +13,11 @@ Data is stored in [PocketBase](https://pocketbase.io/) — a single self-contain
 - **NVD auto-lookup** — enter a CVE ID and click *Look up* to automatically pull the description and CVSS score from the NIST National Vulnerability Database. No manual copy-paste.
 - **EPSS integration** — the [Exploit Prediction Scoring System](https://www.first.org/epss/) score and percentile are fetched automatically alongside NVD data, and contribute 10% of the composite score. If EPSS ≥ 70%, the tool suggests upgrading the exploitability rating.
 - **CISA KEV feed** — vulnerabilities are automatically cross-referenced against the [CISA Known Exploited Vulnerabilities](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) catalogue on load. KEV entries are flagged in the table and receive a scoring boost.
-- **Intelligence tab** — a built-in RSS reader that aggregates threat intel feeds (NVD, CISA, BleepingComputer, and others). Articles are fetched server-side, de-duplicated, and read-state is tracked per user.
+- **Intelligence tab** — a built-in threat intel reader that aggregates RSS feeds (CISA advisories, Krebs on Security, and any custom feeds you add). Articles are fetched server-side via a PocketBase hook, de-duplicated, filtered to the last 30 days, and read-state is tracked per user. Unread article counts appear as a live badge on the tab. CVE IDs mentioned in articles can be added to the tracker in one click.
 - **Bulk actions** — select multiple vulnerabilities with checkboxes (shift-click for range) and apply a status change, group assignment, user assignment, or deletion in one operation. Each bulk action is individually audited with a `bulk_action` flag.
 - **Full audit trail** — every create, update, and delete is logged to `vulnerability_audit_log` with before/after values and the acting user.
-- **CSV import** — import vulnerabilities from any CSV export with auto-detected column mapping and a validation preview step.
+- **CSV import** — import vulnerabilities from any CSV export (Qualys, Tenable, etc.) with auto-detected column mapping and a validation preview step.
+- **Duplicate detection** — adding a CVE ID that is already tracked surfaces the existing record inline. If the existing entry is closed, you can reopen it directly from the form instead of creating a duplicate.
 
 ## Prerequisites
 
@@ -31,8 +32,8 @@ Data is stored in [PocketBase](https://pocketbase.io/) — a single self-contain
 
 ```bash
 # 1. Clone the repo
-git clone <repo-url> vuln-prioritization-tool
-cd vuln-prioritization-tool
+git clone <repo-url> vigil
+cd vigil
 
 # 2. Run the start script
 ./start.sh          # macOS / Linux
@@ -76,7 +77,7 @@ After creating the superadmin:
 | EPSS Score | 10 % | score × 100 (0–1 → 0–100); null counts as 0 |
 | Days Since Discovery | 5 % | min(days / 365, 1) × 100 |
 
-Weights are adjustable per organisation via the Scoring Configuration panel and are persisted to PocketBase.
+Weights are adjustable per organisation via the **Risk Lens** panel and are persisted to PocketBase.
 
 ## NVD API key (optional)
 
@@ -88,7 +89,7 @@ Without an API key, NVD rate-limits requests to 5 per 30 seconds — enough for 
 
 | Role | Capabilities |
 |---|---|
-| **Admin** | Full access: manage users, change settings, all vulnerability operations |
+| **Admin** | Full access: manage users, change settings, data management, all vulnerability operations |
 | **Analyst** | Create, edit, and delete vulnerabilities; change status; bulk actions |
 | **Viewer** | Read-only access to the vulnerability list |
 
@@ -98,4 +99,4 @@ See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for help with stuck processes, data
 
 ## Issues
 
-Please report bugs and feature requests at: https://github.com/your-org/vuln-prioritization-tool/issues
+Please report bugs and feature requests at: https://github.com/your-org/vigil/issues
