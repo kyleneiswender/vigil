@@ -1,0 +1,33 @@
+flowchart TD
+    A([App mounts]) --> B{isAuthenticated?\npb.authStore.isValid}
+    B -- No --> C[Render Auth form]
+    C --> D[User enters email + password]
+    D --> E[pb.authWithPassword]
+    E -- Error --> F[Show error banner]
+    F --> D
+    E -- Success --> G[onAuthenticated → setAuthed=true]
+    B -- Yes --> H
+    G --> H[loadData triggered via useEffect]
+
+    H --> I[authRefresh best-effort\nrequestKey: null]
+    I --> J[initializeUser\nread orgId from pb.authStore.model]
+    J -- No orgId --> K[Show org error, halt]
+    J -- Has orgId --> L[Restore read state from localStorage\nRestore articles from sessionStorage]
+    L --> M[Promise.all parallel fetch:\nvulnerabilities · weights · settings\nrssFeeds · groups · users]
+    M --> N[Resolve weights: user → org default → hardcoded]
+    N --> O[scoreVulnerability for each record]
+    O --> P{lastKevSync stale?\n>24h or never synced}
+    P -- Yes --> Q[syncKevFeed in background\nnon-blocking]
+    P -- No --> R
+    Q --> R{defaultFeedsSeeded?\nand no existing feeds?}
+    R -- No --> S[Seed 3 default RSS feeds\nmark defaultFeedsSeeded=true]
+    R -- Yes --> T[App ready]
+    S --> T
+
+    T --> U[pb.authStore.onChange listener]
+    U -- Token expired / invalidated --> V[setAuthed=false]
+    V --> C
+
+    T --> W[User clicks Sign out]
+    W --> X[logout → clear authStore\nreset all state]
+    X --> C

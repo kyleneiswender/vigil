@@ -1,0 +1,46 @@
+flowchart TD
+    A([Trigger sources]) --> B1[App loadData:\nauto-sync if lastKevSync stale / missing]
+    A --> B2[handleAdd:\nnew vulnerability created]
+    A --> B3[handleImport:\nCSV bulk import]
+    A --> B4[handleKevSync:\nmanual Settings panel button]
+
+    B1 --> C[syncKevFeed\ntrackedVulnerabilities · organizationId]
+    B2 --> C
+    B3 --> C
+    B4 --> C
+
+    C --> D[fetchKevCatalog\nGET /kev-api/.../known_exploited_vulnerabilities.json\nvia Vite proxy]
+    D --> E{HTTP response ok?}
+    E -- No --> F[Return error: network_error]
+    E -- Yes --> G[Parse JSON catalog]
+    G --> H{JSON valid?}
+    H -- No --> I[Return error: parse_error]
+    H -- Yes --> J[Build kevMap\nuppercase cveID → catalog entry\nO1 lookup]
+
+    J --> K[For each tracked vulnerability]
+    K --> L{cveId in kevMap?}
+    L -- No --> M[Skip]
+    L -- Yes --> N{already isKev = true?}
+    N -- Yes --> O[Count as totalMatched\nno write needed]
+    N -- No --> P[pb.update vulnerability:\nisKev=true\nkevDateAdded from catalog\nexploitability=Actively Exploited]
+    P --> Q[Write system_generated audit log:\naction=kev_match]
+    Q --> R[newMatches.push cveId]
+
+    M --> S
+    O --> S
+    R --> S[All vulns processed]
+
+    S --> T[updateOrgSettings: lastKevSync = now]
+    T --> U[Return result:\nnewMatches · totalMatched · lastSync · error=null]
+
+    F --> V([Caller: silent failure on auto-sync\nshows error on manual sync])
+    I --> V
+
+    U --> W{Caller check:\nresult.error?}
+    W -- Error --> V
+    W -- No error AND\nnewMatches.length > 0 --> X[Re-fetch all vulnerabilities from PB]
+    X --> Y[scoreVulnerability for each record]
+    Y --> Z[Update vulnerabilities state]
+    Z --> ZA[Update orgSettings.lastKevSync in state]
+    W -- No error AND\nnewMatches empty --> ZB([State unchanged, sync timestamp updated])
+    ZA --> ZC([Done])

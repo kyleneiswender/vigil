@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { lookupNvd, lookupEpss } from '../lib/api.js';
+import { lookupNvd, lookupEpss, changeVulnerabilityStatus } from '../lib/api.js';
 import { formatEpssScore, formatEpssPercentile } from '../utils/epssUtils.js';
+import { findDuplicateCve, isDuplicateClosed } from '../utils/duplicateDetector.js';
+import DuplicateCveModal from './DuplicateCveModal.jsx';
 
 const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
 const MAX_DAYS = 36500;
@@ -39,13 +41,27 @@ function Spinner() {
 
 // ─── VulnForm ─────────────────────────────────────────────────────────────────
 
-export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null, onPrefillConsumed }) {
+export default function VulnForm({
+  onAdd,
+  nvdApiKey = '',
+  prefilledCveId = null,
+  onPrefillConsumed,
+  vulnerabilities = [],
+  currentUserId,
+  organizationId,
+  onViewExisting,
+  onReopenSuccess,
+  orgUsers = [],
+}) {
   const [form,      setForm]      = useState(EMPTY_FORM);
   const [errors,    setErrors]    = useState({});
   const [nvdStatus, setNvdStatus] = useState({ status: 'idle', message: '' });
   // status: 'idle' | 'loading' | 'error' | 'warn'
   const [nvdFilled, setNvdFilled] = useState(new Set());
   // field names auto-filled by NVD; cleared when the user edits the field
+  const [duplicateRecord,    setDuplicateRecord]    = useState(null);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [isReopening,        setIsReopening]        = useState(false);
 
   const formRef = useRef(null);
 
@@ -75,11 +91,25 @@ export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null,
     if (nvdFilled.has(name)) {
       setNvdFilled((prev) => { const next = new Set(prev); next.delete(name); return next; });
     }
+    // Clear duplicate warning immediately if CVE ID changes to a non-matching value
+    if (name === 'cveId' && duplicateRecord) {
+      const match = findDuplicateCve(value, vulnerabilities);
+      setDuplicateRecord(match);
+    }
+  }
+
+  function handleCveBlur() {
+    const match = findDuplicateCve(form.cveId, vulnerabilities);
+    setDuplicateRecord(match);
   }
 
   async function handleNvdLookup(cveIdOverride = null) {
     setNvdStatus({ status: 'loading', message: '' });
     const cveId = (cveIdOverride ?? form.cveId).trim().toUpperCase();
+
+    // Run duplicate check in parallel with the NVD/EPSS calls
+    const match = findDuplicateCve(cveId, vulnerabilities);
+    setDuplicateRecord(match);
 
     const [nvdSettled, epssSettled] = await Promise.allSettled([
       lookupNvd(cveId, nvdApiKey || null),
@@ -163,14 +193,16 @@ export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null,
     return next;
   }
 
-  function handleSubmit(e) {
-    e.preventDefault();
-    const errs = validate();
-    if (Object.keys(errs).length > 0) {
-      setErrors(errs);
-      return;
-    }
+  function resetForm() {
+    setForm(EMPTY_FORM);
+    setErrors({});
+    setNvdStatus({ status: 'idle', message: '' });
+    setNvdFilled(new Set());
+    setDuplicateRecord(null);
+    setShowDuplicateModal(false);
+  }
 
+  function proceedWithSubmit() {
     onAdd({
       ...form,
       cvssScore:          Number(form.cvssScore),
@@ -178,11 +210,44 @@ export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null,
       affectedAssetCount: Number(form.affectedAssetCount),
       id: crypto.randomUUID(),
     });
+    resetForm();
+  }
 
-    setForm(EMPTY_FORM);
-    setErrors({});
-    setNvdStatus({ status: 'idle', message: '' });
-    setNvdFilled(new Set());
+  function handleSubmit(e) {
+    e.preventDefault();
+    const errs = validate();
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      return;
+    }
+    const duplicate = findDuplicateCve(form.cveId, vulnerabilities);
+    if (duplicate) {
+      setDuplicateRecord(duplicate);
+      setShowDuplicateModal(true);
+      return;
+    }
+    proceedWithSubmit();
+  }
+
+  async function handleReopenExisting() {
+    if (!duplicateRecord) return;
+    setIsReopening(true);
+    try {
+      await changeVulnerabilityStatus(
+        duplicateRecord.id,
+        'Risk Re-opened',
+        null,
+        currentUserId,
+        organizationId,
+      );
+      const reopenedCveId = duplicateRecord.cveId;
+      resetForm();
+      onReopenSuccess?.(reopenedCveId);
+    } catch (err) {
+      console.error('Failed to reopen vulnerability:', err);
+    } finally {
+      setIsReopening(false);
+    }
   }
 
   const cveIsValid = CVE_PATTERN.test(form.cveId.trim());
@@ -213,11 +278,12 @@ export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null,
                 placeholder="CVE-2024-12345"
                 value={form.cveId}
                 onChange={handleChange}
+                onBlur={handleCveBlur}
                 className={`flex-1 ${inputClass} ${errors.cveId ? errCls : ''}`}
               />
               <button
                 type="button"
-                onClick={handleNvdLookup}
+                onClick={() => handleNvdLookup()}
                 disabled={!cveIsValid || lookupBusy}
                 title={cveIsValid ? 'Look up CVE in NVD' : 'Enter a valid CVE ID first'}
                 aria-label="Look up CVE in NVD"
@@ -236,6 +302,41 @@ export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null,
               <p className={`mt-1 text-xs ${nvdStatus.status === 'error' ? 'text-red-600' : 'text-amber-600'}`}>
                 {nvdStatus.message}
               </p>
+            )}
+            {duplicateRecord && !showDuplicateModal && (
+              <div className="mt-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                <div className="flex items-start gap-1.5">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+                    className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" aria-hidden="true">
+                    <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2z" clipRule="evenodd" />
+                  </svg>
+                  <div className="text-xs text-amber-800">
+                    <p className="font-medium">{duplicateRecord.cveId} is already in your tracker</p>
+                    <p className="mt-0.5 text-amber-700">
+                      Status: {duplicateRecord.status}
+                      {duplicateRecord.riskTier && (
+                        <> · Risk Tier: {typeof duplicateRecord.riskTier === 'object' ? duplicateRecord.riskTier.tier : duplicateRecord.riskTier}</>
+                      )}
+                      {duplicateRecord.dateAdded && (
+                        <> · Added: {new Date(duplicateRecord.dateAdded).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</>
+                      )}
+                    </p>
+                    {(() => {
+                      const user = orgUsers.find((u) => u.id === duplicateRecord.assigned_to);
+                      return user ? <p className="mt-0.5 text-amber-700">Assigned to: {user.email}</p> : null;
+                    })()}
+                    {onViewExisting && (
+                      <button
+                        type="button"
+                        onClick={() => onViewExisting(duplicateRecord.id)}
+                        className="mt-1 font-medium text-amber-900 underline hover:text-amber-700"
+                      >
+                        View existing record →
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
 
@@ -422,6 +523,18 @@ export default function VulnForm({ onAdd, nvdApiKey = '', prefilledCveId = null,
           </button>
         </div>
       </form>
+
+      {showDuplicateModal && duplicateRecord && (
+        <DuplicateCveModal
+          duplicate={duplicateRecord}
+          isClosed={isDuplicateClosed(duplicateRecord)}
+          onCancel={() => setShowDuplicateModal(false)}
+          onSubmitAnyway={() => { setShowDuplicateModal(false); proceedWithSubmit(); }}
+          onReopenExisting={handleReopenExisting}
+          orgUsers={orgUsers}
+          isReopening={isReopening}
+        />
+      )}
     </div>
   );
 }

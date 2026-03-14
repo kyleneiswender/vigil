@@ -1,0 +1,54 @@
+flowchart TD
+    A([Status change trigger]) --> B1[Single edit:\nVulnEditPanel → handleEditSave]
+    A --> B2[Bulk action:\nVulnTable → handleBulkStatusChange]
+
+    subgraph Duplicate CVE Detection Path
+        DC1[User types CVE ID in VulnForm] --> DC2{onBlur / onChange /\nlookup / submit}
+        DC2 --> DC3[findDuplicateCve\ncase-insensitive match against\nin-memory vulnerabilities]
+        DC3 --> DC4{Match found?}
+        DC4 -- No --> DC5[Continue normally]
+        DC4 -- Yes, inline --> DC6[Show amber inline warning\nstatus · tier · assigned user\nView existing record link]
+        DC4 -- Yes, on submit --> DC7[isDuplicateClosed\ncheck CLOSED_STATUSES]
+        DC7 --> DC8{isClosed?}
+        DC8 -- No: Active record --> DC9[DuplicateCveModal\nCancel · Submit Anyway]
+        DC9 -- Cancel --> DC10[Close modal]
+        DC9 -- Submit Anyway --> DC11[proceedWithSubmit\ncreate duplicate record]
+        DC8 -- Yes: Closed record --> DC12[DuplicateCveModal\nReopen Existing ·\nSubmit as New · Cancel]
+        DC12 -- Cancel --> DC10
+        DC12 -- Submit as New --> DC11
+        DC12 -- Reopen Existing --> DC13[handleReopenExisting\nchangeVulnerabilityStatus\nid · Risk Re-opened · no comment]
+        DC13 --> DC14[Form reset\nonReopenSuccess callback\nRe-fetch vulns from PB]
+    end
+
+    B1 --> E1[scoreVulnerability updated fields\nwith current weights + thresholds]
+    E1 --> E2[updateVulnerability → PocketBase\nWrite audit log: action=update]
+    E2 --> E3{Status changed OR\nstatusComment present?}
+    E3 -- No --> E8
+    E3 -- Yes --> E4[changeVulnerabilityStatus\nvulnId · newStatus · comment · userId · orgId]
+
+    B2 --> F1[Promise.allSettled:\nchangeVulnerabilityStatus for each id\nbulkAction=true]
+
+    E4 --> G[pb.getOne current record\nrequestKey: null]
+    F1 --> G
+
+    G --> H{newStatus in CLOSED_STATUSES?\nRemediated · Accepted Risk\nFalse Positive · Risk Re-opened}
+    H -- Yes isClosed --> I[updates: status · latestComment\nassigned_to = currentUserId]
+    H -- No isClosed --> J[updates: status · latestComment\nassigned_to unchanged]
+    I --> K[pb.update vulnerability]
+    J --> K
+    K --> L[Write audit log:\naction=status_change\npreviousStatus · newStatus · comment]
+    L --> E8
+
+    E8[Update vulnerabilities in local state] --> E9{newStatus === Remediated?}
+    E9 -- Yes --> E10[triggerCatAnimation\nat mouse position]
+    E9 -- No --> E11
+    E10 --> E11
+
+    F1 --> F2[Count succeeded / failed]
+    F2 --> F3[Re-fetch all vulnerabilities from PB\nRe-score + update state]
+    F3 --> F4[Clear selectedVulnIds]
+    F4 --> F5{Any Remediated?}
+    F5 -- Yes --> F6[triggerCatAnimation\ncenter of viewport]
+    F5 -- No --> F7[Show bulk result banner:\nsucceeded · failed counts]
+    F6 --> F7
+    E11 --> F7

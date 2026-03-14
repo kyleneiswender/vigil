@@ -468,6 +468,14 @@ export default function App() {
     }
   }
 
+  async function handleReopenSuccess(cveId) {
+    const orgId = organizationIdRef.current;
+    const fresh = await fetchVulnerabilities(orgId);
+    setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights, riskThresholds)));
+    setBulkResult({ type: 'success', message: `${cveId} has been reopened and marked as Risk Re-opened.` });
+    setTimeout(() => setBulkResult(null), 4000);
+  }
+
   async function handleAddFeed(name, url) {
     const feed = await createRssFeed(organizationIdRef.current, name, url);
     setRssFeeds((prev) => [...prev, feed]);
@@ -670,7 +678,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.9.2 &mdash; Bulk actions</p>
+                <p className="text-xs text-gray-500">v0.9.3 &mdash; Duplicate CVE detection</p>
               </div>
             </div>
 
@@ -772,8 +780,19 @@ export default function App() {
       {/* ── Tab content ── */}
       {activeTab === 'vulnerabilities' && (
         <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
-          <CsvImport    onImport={handleImport} />
-          <VulnForm     onAdd={handleAdd} nvdApiKey={orgSettings?.nvd_api_key ?? ''} prefilledCveId={prefilledCveId} onPrefillConsumed={() => setPrefilledCveId(null)} />
+          <CsvImport onImport={handleImport} existingVulnerabilities={vulnerabilities} />
+          <VulnForm
+            onAdd={handleAdd}
+            nvdApiKey={orgSettings?.nvd_api_key ?? ''}
+            prefilledCveId={prefilledCveId}
+            onPrefillConsumed={() => setPrefilledCveId(null)}
+            vulnerabilities={vulnerabilities}
+            currentUserId={user?.id}
+            organizationId={organizationIdRef.current}
+            onViewExisting={(id) => { const v = vulnerabilities.find((x) => x.id === id); if (v) setEditingVuln(v); }}
+            onReopenSuccess={handleReopenSuccess}
+            orgUsers={orgUsers}
+          />
           <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
 
           {/* Bulk action result banner */}

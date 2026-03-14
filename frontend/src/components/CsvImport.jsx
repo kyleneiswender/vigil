@@ -36,7 +36,7 @@ const btnSecondary =
  *
  * @param {{ onImport: (records: object[]) => void }} props
  */
-export default function CsvImport({ onImport }) {
+export default function CsvImport({ onImport, existingVulnerabilities = [] }) {
   const [step, setStep] = useState(STEP.IDLE);
   const [isDragging, setIsDragging] = useState(false);
   const [parseError, setParseError] = useState(null);
@@ -161,6 +161,7 @@ export default function CsvImport({ onImport }) {
         {step === STEP.VALIDATE && (
           <ValidationSummary
             result={validationResult}
+            existingVulnerabilities={existingVulnerabilities}
             onImport={handleFinalImport}
             onBack={() => setStep(STEP.PREVIEW)}
             onCancel={reset}
@@ -370,9 +371,15 @@ function PreviewAndMapping({ parsedData, mapping, setMapping, onConfirm, onCance
 
 const MAX_SHOWN_ERRORS = 10;
 
-function ValidationSummary({ result, onImport, onBack, onCancel }) {
+function ValidationSummary({ result, existingVulnerabilities = [], onImport, onBack, onCancel }) {
   const { valid, invalid } = result;
   const hiddenErrors = invalid.length - MAX_SHOWN_ERRORS;
+
+  const duplicates = valid.filter((r) =>
+    existingVulnerabilities.some(
+      (v) => v.cveId?.toUpperCase().trim() === r.cveId?.toUpperCase().trim()
+    )
+  );
 
   return (
     <div className="space-y-4">
@@ -431,6 +438,34 @@ function ValidationSummary({ result, onImport, onBack, onCancel }) {
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           No importable rows were found. All rows have validation errors. Please review your CSV or fix the column mapping.
         </p>
+      )}
+
+      {/* Duplicate CVE notice (informational only — import still proceeds) */}
+      {duplicates.length > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-2">
+          <p className="text-sm font-medium text-amber-800">
+            {duplicates.length} of {valid.length}{' '}
+            {valid.length === 1 ? 'record' : 'records'} already exist in the tracker:
+          </p>
+          <ul className="space-y-0.5">
+            {duplicates.map((r) => {
+              const existing = existingVulnerabilities.find(
+                (v) => v.cveId?.toUpperCase().trim() === r.cveId?.toUpperCase().trim()
+              );
+              return (
+                <li key={r.cveId} className="text-xs text-amber-700">
+                  <span className="font-mono">{r.cveId}</span>
+                  {existing?.status && (
+                    <span className="font-sans"> (Status: {existing.status})</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-xs text-amber-700">
+            These records will be imported as new entries. Existing records will not be modified.
+          </p>
+        </div>
       )}
 
       {/* Actions */}

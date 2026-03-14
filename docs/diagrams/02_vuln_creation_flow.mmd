@@ -1,0 +1,52 @@
+flowchart TD
+    A([User opens VulnForm]) --> B[Enter CVE ID]
+    B --> C{prefilledCveId\nfrom Intelligence tab?}
+    C -- Yes --> D[Auto-fill CVE ID field\nscroll form into view]
+    D --> E[Trigger handleNvdLookup automatically]
+    C -- No --> F[CVE ID onBlur]
+    F --> G[findDuplicateCve against\nin-memory vulnerabilities]
+    G --> H{Match found?}
+    H -- Yes --> I[Show inline amber warning\nwith existing record details]
+    H -- No --> J[No inline warning]
+
+    B --> K[User clicks Look up button]
+    K --> E
+    E --> L[Promise.allSettled:\nlookupNvd + lookupEpss in parallel]
+
+    L --> M{NVD result?}
+    M -- not_found --> N[Show error: CVE not found]
+    M -- rate_limited --> O[Show error: rate limit]
+    M -- network_error --> P[Show error: unreachable]
+    M -- malformed --> Q[Show error: unexpected response]
+    M -- Success --> R[Auto-fill: title, cvssScore\nmark fields with blue highlight]
+
+    L --> S{EPSS result?}
+    S -- Error --> T[Silent: supplementary data\nEPSS fields stay empty]
+    S -- Success --> U[Auto-fill: epssScore, epssPercentile\nmark fields with blue highlight]
+    U --> V{epssScore >= 0.70 AND\nexploitability != Actively Exploited?}
+    V -- Yes --> W[Show amber suggestion:\nconsider Actively Exploited]
+    V -- No --> X
+
+    R --> X[User completes remaining fields:\nassetCriticality · exploitability\ndaysSinceDiscovery · affectedAssetCount\ninternetFacing]
+    W --> X
+    T --> X
+
+    X --> Y[User clicks Calculate & Add]
+    Y --> Z[validate form fields]
+    Z -- Validation errors --> AA[Display inline field errors\nhalt submission]
+    Z -- Valid --> AB[findDuplicateCve on form.cveId]
+    AB --> AC{Duplicate found?}
+    AC -- Yes --> AD[setShowDuplicateModal = true]
+    AD --> AE[DuplicateCveModal shown\nsee diagram 04 for branch logic]
+    AE -- Cancel --> AF[Close modal, stay on form]
+    AE -- Submit Anyway --> AG
+    AE -- Reopen Existing --> AH[changeVulnerabilityStatus\nRisk Re-opened\nsee diagram 04]
+    AC -- No --> AG[proceedWithSubmit\nscoreVulnerability with weights + thresholds]
+    AG --> AI[createVulnerability → PocketBase\nstatus: Open]
+    AI --> AJ[Write audit log: action=create]
+    AJ --> AK[Prepend new record to state]
+    AK --> AL[Background: syncKevFeed\nfor new record only]
+    AL --> AM{New KEV match?}
+    AM -- Yes --> AN[Re-fetch all vulns from PB\nupdate state + lastKevSync]
+    AM -- No --> AO([Form reset, ready for next entry])
+    AN --> AO
