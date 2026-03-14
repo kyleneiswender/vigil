@@ -7,6 +7,7 @@
  */
 
 import { pb, getCurrentUser } from './pocketbase.js';
+import { CLOSED_STATUSES } from '../utils/scoringEngine.js';
 
 // ─── User initialisation ──────────────────────────────────────────────────────
 
@@ -73,6 +74,7 @@ export async function createVulnerability(vuln, organizationId) {
     riskTier:            vuln.riskTier?.tier ?? vuln.riskTier ?? '',
     epssScore:           vuln.epssScore      ?? null,
     epssPercentile:      vuln.epssPercentile ?? null,
+    status:              'Open',
     organization:        effectiveOrgId,
   };
   // requestKey: null disables auto-cancellation so parallel creates (bulk CSV import) all complete
@@ -170,8 +172,9 @@ export async function deleteVulnerability(id, organizationId) {
 /** Fetch all groups for the given organization. */
 export async function fetchGroups(organizationId) {
   return pb.collection('groups').getFullList({
-    filter: `organization = "${organizationId}"`,
-    sort:   'name',
+    filter:     `organization = "${organizationId}"`,
+    sort:       'name',
+    requestKey: null, // prevent StrictMode double-invocation from auto-cancelling
   });
 }
 
@@ -372,6 +375,127 @@ export async function updateRiskTierBatch(changes, organizationId) {
       console.error('[updateRiskTierBatch] failed to update tier for:', id, err);
     }
   }));
+}
+
+// ─── Status workflow ──────────────────────────────────────────────────────────
+
+/**
+ * Change the status of a vulnerability and write a status_changed audit log entry.
+ * When the new status is a closed status (Remediated, Accepted Risk, False Positive),
+ * also updates assigned_to to the current user.
+ *
+ * @param {string}      vulnerabilityId
+ * @param {string}      newStatus       - One of VULNERABILITY_STATUSES
+ * @param {string|null} comment         - Optional justification comment
+ * @param {string}      currentUserId   - ID of the authenticated user making the change
+ * @param {string}      organizationId
+ */
+export async function changeVulnerabilityStatus(vulnerabilityId, newStatus, comment, currentUserId, organizationId, { bulkAction = false } = {}) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+
+  const current = await pb.collection('vulnerabilities').getOne(vulnerabilityId, { requestKey: null });
+
+  const isClosed = CLOSED_STATUSES.includes(newStatus);
+  const updates = {
+    status:        newStatus,
+    latestComment: comment ?? null,
+  };
+  if (isClosed) {
+    updates.assigned_to = currentUserId;
+  }
+
+  await pb.collection('vulnerabilities').update(vulnerabilityId, updates, { requestKey: null });
+
+  const newValues = {
+    status:      newStatus,
+    comment:     comment ?? null,
+    assigned_to: isClosed ? currentUserId : (current.assigned_to ?? null),
+  };
+  if (bulkAction) newValues.bulk_action = true;
+
+  await _writeVulnAudit({
+    vulnerability:  vulnerabilityId,
+    action:         'status_changed',
+    changedFields:  isClosed ? ['status', 'assigned_to'] : ['status'],
+    previousValues: {
+      status:      current.status      ?? 'Open',
+      assigned_to: current.assigned_to ?? null,
+    },
+    newValues,
+    organizationId:  effectiveOrgId,
+    systemGenerated: false,
+  });
+}
+
+// ─── Bulk operations ──────────────────────────────────────────────────────────
+
+/**
+ * Bulk-assign a group to a set of vulnerability records.
+ * @param {string[]} ids           - Array of vulnerability IDs
+ * @param {string|null} groupId    - Group ID to assign, or null/'' to unassign
+ * @param {string} organizationId
+ * @returns {{ succeeded: number, failed: number, total: number }}
+ */
+export async function bulkAssignGroup(ids, groupId, organizationId) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+  const results = await Promise.allSettled(ids.map(async (id) => {
+    const previous = await pb.collection('vulnerabilities').getOne(id, { requestKey: null });
+    await pb.collection('vulnerabilities').update(id, { group: groupId || null }, { requestKey: null });
+    await _writeVulnAudit({
+      vulnerability:  id,
+      action:         'update',
+      changedFields:  ['group'],
+      previousValues: { group: previous.group ?? null },
+      newValues:      { group: groupId || null, bulk_action: true },
+      organizationId: effectiveOrgId,
+    });
+    return id;
+  }));
+  return _bulkPartialResults(results);
+}
+
+/**
+ * Bulk-assign a user to a set of vulnerability records.
+ * @param {string[]} ids           - Array of vulnerability IDs
+ * @param {string|null} userId     - User ID to assign, or null/'' to unassign
+ * @param {string} organizationId
+ * @returns {{ succeeded: number, failed: number, total: number }}
+ */
+export async function bulkAssignUser(ids, userId, organizationId) {
+  const effectiveOrgId = organizationId || currentOrgId || sessionStorage.getItem('pb_org_id');
+  const results = await Promise.allSettled(ids.map(async (id) => {
+    const previous = await pb.collection('vulnerabilities').getOne(id, { requestKey: null });
+    await pb.collection('vulnerabilities').update(id, { assigned_to: userId || null }, { requestKey: null });
+    await _writeVulnAudit({
+      vulnerability:  id,
+      action:         'update',
+      changedFields:  ['assigned_to'],
+      previousValues: { assigned_to: previous.assigned_to ?? null },
+      newValues:      { assigned_to: userId || null, bulk_action: true },
+      organizationId: effectiveOrgId,
+    });
+    return id;
+  }));
+  return _bulkPartialResults(results);
+}
+
+/**
+ * Bulk-delete a set of vulnerability records (audit written per record).
+ * @param {string[]} ids
+ * @param {string} organizationId
+ * @returns {{ succeeded: number, failed: number, total: number }}
+ */
+export async function bulkDeleteVulnerabilities(ids, organizationId) {
+  const results = await Promise.allSettled(
+    ids.map((id) => deleteVulnerability(id, organizationId))
+  );
+  return _bulkPartialResults(results);
+}
+
+function _bulkPartialResults(results) {
+  const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+  const failed    = results.filter((r) => r.status === 'rejected').length;
+  return { succeeded, failed, total: results.length };
 }
 
 // ─── NVD lookup ───────────────────────────────────────────────────────────────
@@ -662,7 +786,8 @@ function mapRecord(record) {
     epssPercentile:     record.epssPercentile      ?? null,
     isKev:              record.isKev               ?? false,
     kevDateAdded:       record.kevDateAdded        ?? null,
-    status:             record.status              ?? 'open',
+    status:             record.status              ?? 'Open',
+    latestComment:      record.latestComment       ?? null,
     group:              record.group               ?? '',
     groupName:          record.expand?.group?.name        ?? '',
     assignedTo:         record.assigned_to                ?? '',

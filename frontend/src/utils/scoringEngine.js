@@ -18,6 +18,28 @@
  * adjusts the weight configuration panel.
  */
 
+// ─── Vulnerability status constants ───────────────────────────────────────────
+
+/**
+ * All valid status values for a vulnerability, in display/workflow order.
+ * Status is stored as a plain text field; the frontend enforces these values.
+ */
+export const VULNERABILITY_STATUSES = [
+  'Open',
+  'In Progress',
+  'Remediated',
+  'Accepted Risk',
+  'False Positive',
+  'Risk Re-opened',
+];
+
+/**
+ * Statuses that indicate a vulnerability is no longer actively being worked.
+ * Records in these statuses are excluded from the default "active" filter view.
+ * Note: 'Risk Re-opened' is intentionally NOT here — it is an active status.
+ */
+export const CLOSED_STATUSES = ['Remediated', 'Accepted Risk', 'False Positive'];
+
 // ─── Weight model ─────────────────────────────────────────────────────────────
 
 /**

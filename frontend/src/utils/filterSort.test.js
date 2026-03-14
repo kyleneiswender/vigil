@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { filterVulns, sortVulns } from './filterSort.js';
+import { VULNERABILITY_STATUSES } from './scoringEngine.js';
 
 // ─── Shared fixture ───────────────────────────────────────────────────────────
 
@@ -263,5 +264,105 @@ describe('filterVulns — kev filter', () => {
   it('kev="non_kev" returns only non-KEV records', () => {
     const result = filterVulns(kevVulns, { ...EMPTY_KEV, kev: 'non_kev' });
     expect(result.map((v) => v.id)).toEqual(['2']);
+  });
+});
+
+// ─── filterVulns — status filter ──────────────────────────────────────────────
+
+describe('filterVulns — status filter', () => {
+  const EMPTY_STATUS = {
+    search: '', riskTier: '', assetCriticality: '', internetFacing: '',
+    groupName: '', assignedTo: '', kev: '',
+  };
+
+  const statusVulns = [
+    { id: '1', cveId: 'CVE-2024-0001', title: 'A', riskTier: { tier: 'Critical' },
+      assetCriticality: 'High', internetFacing: false, groupName: '', assignedToEmail: '',
+      compositeScore: 90, isKev: false, status: 'Open' },
+    { id: '2', cveId: 'CVE-2024-0002', title: 'B', riskTier: { tier: 'High' },
+      assetCriticality: 'Medium', internetFacing: false, groupName: '', assignedToEmail: '',
+      compositeScore: 70, isKev: false, status: 'In Progress' },
+    { id: '3', cveId: 'CVE-2024-0003', title: 'C', riskTier: { tier: 'Medium' },
+      assetCriticality: 'Low', internetFacing: false, groupName: '', assignedToEmail: '',
+      compositeScore: 50, isKev: false, status: 'Remediated' },
+    { id: '4', cveId: 'CVE-2024-0004', title: 'D', riskTier: { tier: 'Low' },
+      assetCriticality: 'Low', internetFacing: false, groupName: '', assignedToEmail: '',
+      compositeScore: 20, isKev: false, status: 'Accepted Risk' },
+    { id: '5', cveId: 'CVE-2024-0005', title: 'E', riskTier: { tier: 'Low' },
+      assetCriticality: 'Low', internetFacing: false, groupName: '', assignedToEmail: '',
+      compositeScore: 15, isKev: false, status: 'False Positive' },
+    { id: '6', cveId: 'CVE-2024-0006', title: 'F', riskTier: { tier: 'Medium' },
+      assetCriticality: 'Medium', internetFacing: false, groupName: '', assignedToEmail: '',
+      compositeScore: 55, isKev: false, status: 'Risk Re-opened' },
+  ];
+
+  it('status="active" excludes all CLOSED_STATUSES (Remediated, Accepted Risk, False Positive)', () => {
+    const result = filterVulns(statusVulns, { ...EMPTY_STATUS, status: 'active' });
+    const resultIds = result.map((v) => v.id).sort();
+    expect(resultIds).toEqual(['1', '2', '6']); // Open, In Progress, Risk Re-opened
+    expect(result.find((v) => v.status === 'Remediated')).toBeUndefined();
+    expect(result.find((v) => v.status === 'Accepted Risk')).toBeUndefined();
+    expect(result.find((v) => v.status === 'False Positive')).toBeUndefined();
+  });
+
+  it('status="active" includes Risk Re-opened (it is an active status)', () => {
+    const result = filterVulns(statusVulns, { ...EMPTY_STATUS, status: 'active' });
+    expect(result.find((v) => v.status === 'Risk Re-opened')).toBeDefined();
+  });
+
+  it('status="all" returns every record', () => {
+    const result = filterVulns(statusVulns, { ...EMPTY_STATUS, status: 'all' });
+    expect(result).toHaveLength(6);
+  });
+
+  it('status="" (empty string) returns every record — undefined behaves like "all"', () => {
+    const result = filterVulns(statusVulns, { ...EMPTY_STATUS, status: '' });
+    expect(result).toHaveLength(6);
+  });
+
+  it('specific status="Remediated" returns only Remediated records', () => {
+    const result = filterVulns(statusVulns, { ...EMPTY_STATUS, status: 'Remediated' });
+    expect(result.map((v) => v.id)).toEqual(['3']);
+  });
+
+  it('specific status="In Progress" returns only In Progress records', () => {
+    const result = filterVulns(statusVulns, { ...EMPTY_STATUS, status: 'In Progress' });
+    expect(result.map((v) => v.id)).toEqual(['2']);
+  });
+
+  it('specific status="Risk Re-opened" returns only Risk Re-opened records', () => {
+    const result = filterVulns(statusVulns, { ...EMPTY_STATUS, status: 'Risk Re-opened' });
+    expect(result.map((v) => v.id)).toEqual(['6']);
+  });
+
+  it('specific status with no matches returns empty array', () => {
+    const result = filterVulns(statusVulns, { ...EMPTY_STATUS, status: 'Accepted Risk' });
+    expect(result.map((v) => v.id)).toEqual(['4']);
+  });
+});
+
+// ─── sortVulns — status field ─────────────────────────────────────────────────
+
+describe('sortVulns — status field', () => {
+  const statusVulns = VULNERABILITY_STATUSES.map((s, i) => ({
+    id: String(i + 1),
+    riskTier: { tier: 'Low' },
+    status: s,
+  })).reverse(); // start in reverse order so we can verify sorting
+
+  it('ascending sort uses VULNERABILITY_STATUSES workflow order (Open first)', () => {
+    const result = sortVulns(statusVulns, 'status', 'asc');
+    expect(result.map((v) => v.status)).toEqual(VULNERABILITY_STATUSES);
+  });
+
+  it('descending sort reverses the workflow order (Risk Re-opened first)', () => {
+    const result = sortVulns(statusVulns, 'status', 'desc');
+    expect(result.map((v) => v.status)).toEqual([...VULNERABILITY_STATUSES].reverse());
+  });
+
+  it('does not mutate the input array', () => {
+    const copy = [...statusVulns];
+    sortVulns(statusVulns, 'status', 'asc');
+    expect(statusVulns).toEqual(copy);
   });
 });

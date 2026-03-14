@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { getRiskTier, TIER_COLORS } from '../utils/scoringEngine';
+import { useState, useEffect } from 'react';
+import { getRiskTier, TIER_COLORS, VULNERABILITY_STATUSES, CLOSED_STATUSES } from '../utils/scoringEngine';
 import { filterVulns, sortVulns } from '../utils/filterSort';
 import { exportCSV, exportPDF, formatDate } from '../utils/exportUtils';
 
@@ -8,6 +8,7 @@ import { exportCSV, exportPDF, formatDate } from '../utils/exportUtils';
 const COLUMNS = [
   { key: 'cveId',              label: 'CVE ID',          align: 'left'   },
   { key: 'title',              label: 'Title',           align: 'left'   },
+  { key: 'status',             label: 'Status',          align: 'left'   },
   { key: 'cvssScore',          label: 'CVSS',            align: 'center' },
   { key: 'epssScore',          label: 'EPSS',            align: 'center' },
   { key: 'isKev',              label: 'KEV',             align: 'center' },
@@ -23,7 +24,7 @@ const COLUMNS = [
   { key: 'assignedToEmail',    label: 'Assigned To',     align: 'left'   },
 ];
 
-// ─── Display sub-components (unchanged from Sprint 1/2) ───────────────────────
+// ─── Display sub-components ───────────────────────────────────────────────────
 
 function ScoreBar({ score, riskThresholds = {} }) {
   const { tier } = getRiskTier(score, riskThresholds);
@@ -58,6 +59,24 @@ function CvssChip({ score }) {
   else if (score >= 7.0) cls = 'bg-orange-500 text-white';
   else if (score >= 4.0) cls = 'bg-yellow-400 text-yellow-900';
   return <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-bold ${cls}`}>{score.toFixed(1)}</span>;
+}
+
+const STATUS_BADGE_STYLES = {
+  'Open':           'bg-gray-100 text-gray-700',
+  'In Progress':    'bg-blue-100 text-blue-700',
+  'Remediated':     'bg-green-100 text-green-700',
+  'Accepted Risk':  'bg-purple-100 text-purple-700',
+  'False Positive': 'bg-slate-100 text-slate-700',
+  'Risk Re-opened': 'bg-amber-100 text-amber-700',
+};
+
+function StatusBadge({ status }) {
+  const cls = STATUS_BADGE_STYLES[status] ?? 'bg-gray-100 text-gray-700';
+  return (
+    <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${cls}`}>
+      {status ?? 'Open'}
+    </span>
+  );
 }
 
 function SummaryPills({ vulnerabilities }) {
@@ -172,6 +191,14 @@ function FilterBar({ filters, onChange, onClear, hasFilters, vulnerabilities }) 
         <option value="non_kev">Non-KEV</option>
       </select>
 
+      <select value={filters.status} onChange={(e) => onChange('status', e.target.value)} className={fSelectClass}>
+        <option value="active">Active Only</option>
+        <option value="all">All Statuses</option>
+        {VULNERABILITY_STATUSES.map((s) => (
+          <option key={s} value={s}>{s}</option>
+        ))}
+      </select>
+
       {hasFilters && (
         <button type="button" onClick={onClear}
           className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 shadow-sm hover:bg-gray-100 transition-colors">
@@ -187,16 +214,40 @@ function FilterBar({ filters, onChange, onClear, hasFilters, vulnerabilities }) 
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-const EMPTY_FILTERS = { search: '', riskTier: '', assetCriticality: '', internetFacing: '', groupName: '', assignedTo: '', kev: '' };
+const EMPTY_FILTERS = { search: '', riskTier: '', assetCriticality: '', internetFacing: '', groupName: '', assignedTo: '', kev: '', status: 'active' };
 
-export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, riskThresholds = {} }) {
+const popoverInputCls = 'w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+const popoverBtnCls  = 'flex-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors';
+const popoverCancelCls = 'rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors';
+
+export default function VulnTable({
+  vulnerabilities, onDelete, onEdit, weights, riskThresholds = {},
+  selectedVulnIds = new Set(), onSelectionChange = () => {},
+  onBulkStatusChange, onBulkAssignGroup, onBulkAssignUser, onBulkDelete,
+  groups = [], orgUsers = [],
+}) {
   const [filters, setFilters]   = useState(EMPTY_FILTERS);
   const [sortKey, setSortKey]   = useState('compositeScore');
   const [sortDir, setSortDir]   = useState('desc');
+  const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
+  const [activePopover, setActivePopover] = useState(null);
+  const [bulkStatus,  setBulkStatus]  = useState('Open');
+  const [bulkComment, setBulkComment] = useState('');
+  const [bulkGroupId, setBulkGroupId] = useState('');
+  const [bulkUserId,  setBulkUserId]  = useState('');
+  const [bulkApplying, setBulkApplying] = useState(false);
 
   const filtered   = filterVulns(vulnerabilities, filters);
   const sorted     = sortVulns(filtered, sortKey, sortDir);
-  const hasFilters = Object.values(filters).some(Boolean);
+  const hasFilters = Object.entries(filters).some(([k, v]) => k === 'status' ? v !== 'active' : Boolean(v));
+
+  const allVisibleSelected  = sorted.length > 0 && sorted.every((v) => selectedVulnIds.has(v.id));
+  const someVisibleSelected = !allVisibleSelected && sorted.some((v) => selectedVulnIds.has(v.id));
+
+  // Reset lastSelectedIndex when selection is fully cleared
+  useEffect(() => {
+    if (selectedVulnIds.size === 0) setLastSelectedIndex(null);
+  }, [selectedVulnIds.size]);
 
   function handleFilterChange(key, value) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -211,9 +262,84 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
       setSortKey(key);
       setSortDir('asc');
     }
+    setLastSelectedIndex(null); // sorted order changed — range anchor is stale
   }
 
-  // ── Empty state ────────────────────────────────────────────────────────────
+  function handleHeaderCheckbox() {
+    const next = new Set(selectedVulnIds);
+    if (allVisibleSelected) {
+      sorted.forEach((v) => next.delete(v.id));
+    } else {
+      sorted.forEach((v) => next.add(v.id));
+    }
+    onSelectionChange(next);
+    setLastSelectedIndex(null);
+  }
+
+  function handleRowCheckbox(vuln, index, shiftKey) {
+    const next = new Set(selectedVulnIds);
+    if (shiftKey && lastSelectedIndex !== null) {
+      // Range select — add all rows between anchor and current index (inclusive)
+      const lo = Math.min(lastSelectedIndex, index);
+      const hi = Math.max(lastSelectedIndex, index);
+      for (let i = lo; i <= hi; i++) {
+        next.add(sorted[i].id);
+      }
+    } else {
+      if (next.has(vuln.id)) {
+        next.delete(vuln.id);
+      } else {
+        next.add(vuln.id);
+      }
+    }
+    onSelectionChange(next);
+    setLastSelectedIndex(index);
+  }
+
+  async function handleBulkApplyStatus() {
+    setBulkApplying(true);
+    try {
+      await onBulkStatusChange([...selectedVulnIds], bulkStatus, bulkComment.trim() || null);
+      setActivePopover(null);
+      setBulkComment('');
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  async function handleBulkApplyGroup() {
+    setBulkApplying(true);
+    try {
+      await onBulkAssignGroup([...selectedVulnIds], bulkGroupId || null);
+      setActivePopover(null);
+      setBulkGroupId('');
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  async function handleBulkApplyUser() {
+    setBulkApplying(true);
+    try {
+      await onBulkAssignUser([...selectedVulnIds], bulkUserId || null);
+      setActivePopover(null);
+      setBulkUserId('');
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  async function handleBulkApplyDelete() {
+    setBulkApplying(true);
+    try {
+      await onBulkDelete([...selectedVulnIds]);
+      setActivePopover(null);
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  // ── Empty state ─────────────────────────────────────────────────────────────
   if (vulnerabilities.length === 0) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -232,6 +358,9 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
 
   const exportBtnClass = 'inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors';
   const activeColLabel = COLUMNS.find((c) => c.key === sortKey)?.label ?? sortKey;
+
+  const isBulkStatusDisabled = bulkApplying || (bulkStatus === 'Accepted Risk' && !bulkComment.trim());
+  const isStatusClosed = CLOSED_STATUSES.includes(bulkStatus);
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -273,6 +402,157 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
         </div>
       </div>
 
+      {/* ── Bulk action toolbar ── */}
+      {selectedVulnIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-blue-200 bg-blue-50 px-6 py-2.5">
+          <span className="text-sm font-semibold text-blue-800">
+            {selectedVulnIds.size} selected
+          </span>
+
+          {/* Change Status */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setActivePopover(activePopover === 'status' ? null : 'status')}
+              className="rounded-md border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 transition-colors"
+            >
+              Change Status
+            </button>
+            {activePopover === 'status' && (
+              <div className="absolute z-20 left-0 top-full mt-1 w-72 rounded-lg border border-gray-200 bg-white shadow-lg">
+                <div className="p-4 space-y-3">
+                  <p className="text-sm font-semibold text-gray-800">Change Status</p>
+                  <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} className={popoverInputCls}>
+                    {VULNERABILITY_STATUSES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  {isStatusClosed && (
+                    <>
+                      <textarea
+                        placeholder={bulkStatus === 'Accepted Risk' ? 'Justification (required)' : 'Comment (optional)'}
+                        value={bulkComment}
+                        onChange={(e) => setBulkComment(e.target.value)}
+                        rows={2}
+                        className={`${popoverInputCls} resize-none`}
+                      />
+                      {bulkStatus === 'Accepted Risk' && !bulkComment.trim() && (
+                        <p className="text-xs text-red-600">Comment required for Accepted Risk</p>
+                      )}
+                    </>
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={handleBulkApplyStatus} disabled={isBulkStatusDisabled} className={popoverBtnCls}>
+                      {bulkApplying ? 'Applying…' : `Apply to ${selectedVulnIds.size}`}
+                    </button>
+                    <button onClick={() => setActivePopover(null)} className={popoverCancelCls}>Cancel</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Assign Group */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setActivePopover(activePopover === 'group' ? null : 'group')}
+              className="rounded-md border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 transition-colors"
+            >
+              Assign Group
+            </button>
+            {activePopover === 'group' && (
+              <div className="absolute z-20 left-0 top-full mt-1 w-56 rounded-lg border border-gray-200 bg-white shadow-lg">
+                <div className="p-4 space-y-3">
+                  <p className="text-sm font-semibold text-gray-800">Assign Group</p>
+                  <select value={bulkGroupId} onChange={(e) => setBulkGroupId(e.target.value)} className={popoverInputCls}>
+                    <option value="">— Unassign —</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                  <div className="flex gap-2">
+                    <button onClick={handleBulkApplyGroup} disabled={bulkApplying} className={popoverBtnCls}>
+                      {bulkApplying ? 'Applying…' : `Apply to ${selectedVulnIds.size}`}
+                    </button>
+                    <button onClick={() => setActivePopover(null)} className={popoverCancelCls}>Cancel</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Assign User */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setActivePopover(activePopover === 'user' ? null : 'user')}
+              className="rounded-md border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 transition-colors"
+            >
+              Assign User
+            </button>
+            {activePopover === 'user' && (
+              <div className="absolute z-20 left-0 top-full mt-1 w-56 rounded-lg border border-gray-200 bg-white shadow-lg">
+                <div className="p-4 space-y-3">
+                  <p className="text-sm font-semibold text-gray-800">Assign User</p>
+                  <select value={bulkUserId} onChange={(e) => setBulkUserId(e.target.value)} className={popoverInputCls}>
+                    <option value="">— Unassign —</option>
+                    {orgUsers.map((u) => (
+                      <option key={u.id} value={u.id}>{u.email}</option>
+                    ))}
+                  </select>
+                  <div className="flex gap-2">
+                    <button onClick={handleBulkApplyUser} disabled={bulkApplying} className={popoverBtnCls}>
+                      {bulkApplying ? 'Applying…' : `Apply to ${selectedVulnIds.size}`}
+                    </button>
+                    <button onClick={() => setActivePopover(null)} className={popoverCancelCls}>Cancel</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Delete */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setActivePopover(activePopover === 'delete' ? null : 'delete')}
+              className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors"
+            >
+              Delete
+            </button>
+            {activePopover === 'delete' && (
+              <div className="absolute z-20 left-0 top-full mt-1 w-60 rounded-lg border border-red-200 bg-white shadow-lg">
+                <div className="p-4 space-y-3">
+                  <p className="text-sm font-semibold text-red-700">
+                    Delete {selectedVulnIds.size} record{selectedVulnIds.size !== 1 ? 's' : ''}?
+                  </p>
+                  <p className="text-xs text-gray-600">This action cannot be undone.</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleBulkApplyDelete}
+                      disabled={bulkApplying}
+                      className="flex-1 rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {bulkApplying ? 'Deleting…' : 'Delete'}
+                    </button>
+                    <button onClick={() => setActivePopover(null)} className={popoverCancelCls}>Cancel</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => { onSelectionChange(new Set()); setActivePopover(null); }}
+            className="ml-auto text-xs text-blue-600 hover:text-blue-800 underline"
+          >
+            Deselect all
+          </button>
+        </div>
+      )}
+
       {/* ── Filter bar ── */}
       <FilterBar filters={filters} onChange={handleFilterChange} onClear={clearFilters} hasFilters={hasFilters} vulnerabilities={vulnerabilities} />
 
@@ -281,6 +561,18 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
+              {/* Checkbox column */}
+              <th className="w-10 px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  ref={(el) => { if (el) el.indeterminate = someVisibleSelected; }}
+                  onChange={handleHeaderCheckbox}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 cursor-pointer"
+                  aria-label="Select all visible"
+                />
+              </th>
+
               {/* Rank badge — not sortable */}
               <th className="w-10 px-4 py-3" />
 
@@ -301,7 +593,7 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
                 </th>
               ))}
 
-              {/* Delete — not sortable */}
+              {/* Actions — not sortable */}
               <th className="px-4 py-3" />
             </tr>
           </thead>
@@ -309,7 +601,7 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
           <tbody className="divide-y divide-gray-100">
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan={COLUMNS.length + 2} className="py-12 text-center text-sm text-gray-500">
+                <td colSpan={COLUMNS.length + 3} className="py-12 text-center text-sm text-gray-500">
                   No vulnerabilities match the current filters.{' '}
                   <button type="button" onClick={clearFilters}
                     className="font-medium text-blue-600 underline hover:text-blue-700">
@@ -319,7 +611,16 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
               </tr>
             ) : (
               sorted.map((vuln, index) => (
-                <VulnRow key={vuln.id} vuln={vuln} rank={index + 1} onDelete={onDelete} onEdit={onEdit} riskThresholds={riskThresholds} />
+                <VulnRow
+                  key={vuln.id}
+                  vuln={vuln}
+                  rank={index + 1}
+                  onDelete={onDelete}
+                  onEdit={onEdit}
+                  riskThresholds={riskThresholds}
+                  isSelected={selectedVulnIds.has(vuln.id)}
+                  onCheckbox={(shiftKey) => handleRowCheckbox(vuln, index, shiftKey)}
+                />
               ))
             )}
           </tbody>
@@ -334,6 +635,9 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
           {hasFilters && ' · filters active'}
           {' · '}sorted by <span className="font-medium text-gray-600">{activeColLabel}</span>{' '}
           ({sortDir === 'asc' ? '↑ asc' : '↓ desc'})
+          {selectedVulnIds.size > 0 && (
+            <span className="ml-2 font-medium text-blue-600">· {selectedVulnIds.size} selected</span>
+          )}
         </p>
       </div>
     </div>
@@ -342,11 +646,22 @@ export default function VulnTable({ vulnerabilities, onDelete, onEdit, weights, 
 
 // ─── Row ──────────────────────────────────────────────────────────────────────
 
-function VulnRow({ vuln, rank, onDelete, onEdit, riskThresholds = {} }) {
+function VulnRow({ vuln, rank, onDelete, onEdit, riskThresholds = {}, isSelected = false, onCheckbox }) {
   const { bg, border } = getRiskTier(vuln.compositeScore ?? 0, riskThresholds);
+  const isClosed = CLOSED_STATUSES.includes(vuln.status ?? 'Open');
 
   return (
-    <tr className={`${bg} border-l-4 ${border} transition-colors hover:brightness-95`}>
+    <tr className={`border-l-4 ${border} transition-colors hover:brightness-95${isClosed ? ' vuln-row--closed' : ''}${isSelected ? ' bg-blue-100' : ` ${bg}`}`}>
+      <td className="whitespace-nowrap px-4 py-3">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => {}}
+          onClick={(e) => { e.stopPropagation(); onCheckbox(e.shiftKey); }}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 cursor-pointer"
+          aria-label={`Select ${vuln.cveId}`}
+        />
+      </td>
       <td className="whitespace-nowrap px-4 py-3">
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-200 text-[10px] font-bold text-gray-600">
           {rank}
@@ -357,6 +672,9 @@ function VulnRow({ vuln, rank, onDelete, onEdit, riskThresholds = {} }) {
       </td>
       <td className="max-w-xs px-4 py-3">
         <span className="block truncate text-gray-900" title={vuln.title}>{vuln.title}</span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3">
+        <StatusBadge status={vuln.status ?? 'Open'} />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-center">
         <CvssChip score={vuln.cvssScore ?? 0} />
@@ -399,7 +717,16 @@ function VulnRow({ vuln, rank, onDelete, onEdit, riskThresholds = {} }) {
         <TierBadge score={vuln.compositeScore ?? 0} riskThresholds={riskThresholds} />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-600">
-        {formatDate(vuln.dateAdded)}
+        <span className="flex items-center gap-1.5">
+          {formatDate(vuln.dateAdded)}
+          {vuln.latestComment && (
+            <span title={vuln.latestComment} className="cursor-help text-gray-400 hover:text-gray-600 transition-colors" aria-label="Has comment">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5">
+                <path fillRule="evenodd" d="M1 8.74c0 .983.713 1.825 1.69 1.943.764.092 1.534.164 2.31.216v2.35a.75.75 0 0 0 1.28.53l2.51-2.51c.182-.181.427-.281.68-.281H13a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H3a2 2 0 0 0-2 2v3.79Z" clipRule="evenodd" />
+              </svg>
+            </span>
+          )}
+        </span>
       </td>
       <td className="max-w-[120px] px-4 py-3">
         <span className="block truncate text-sm text-gray-500" title={vuln.groupName || undefined}>

@@ -3,17 +3,20 @@
  * All functions are pure — no side effects, no React dependencies.
  */
 
+import { CLOSED_STATUSES, VULNERABILITY_STATUSES } from './scoringEngine.js';
+
 // ─── Filtering ────────────────────────────────────────────────────────────────
 
 /**
  * Filter a vulnerability array by the given filter criteria.
  *
  * @param {object[]} vulns
- * @param {{ search: string, riskTier: string, assetCriticality: string, internetFacing: string }} filters
+ * @param {{ search: string, riskTier: string, assetCriticality: string, internetFacing: string, status: string }} filters
  *   internetFacing: '' = all, 'yes' = internet-facing, 'no' = internal only
+ *   status: 'active' = exclude CLOSED_STATUSES, 'all' = show everything, or a specific status string
  * @returns {object[]}
  */
-export function filterVulns(vulns, { search, riskTier, assetCriticality, internetFacing, groupName, assignedTo, kev }) {
+export function filterVulns(vulns, { search, riskTier, assetCriticality, internetFacing, groupName, assignedTo, kev, status }) {
   return vulns.filter((v) => {
     if (search) {
       const q = search.toLowerCase();
@@ -28,6 +31,11 @@ export function filterVulns(vulns, { search, riskTier, assetCriticality, interne
     if (assignedTo && assignedTo !== '__unassigned__' && v.assignedToEmail !== assignedTo) return false;
     if (kev === 'kev_only' && !v.isKev) return false;
     if (kev === 'non_kev' && v.isKev) return false;
+    if (status === 'active') {
+      if (CLOSED_STATUSES.includes(v.status ?? 'Open')) return false;
+    } else if (status && status !== 'all') {
+      if (v.status !== status) return false;
+    }
     return true;
   });
 }
@@ -41,6 +49,9 @@ export function filterVulns(vulns, { search, riskTier, assetCriticality, interne
 const TIER_RANK = { Critical: 3, High: 2, Medium: 1, Low: 0 };
 const CRITICALITY_RANK = { Critical: 3, High: 2, Medium: 1, Low: 0 };
 const EXPLOIT_RANK = { 'Actively Exploited': 2, 'PoC Exists': 1, Theoretical: 0 };
+
+// Status sort rank: index in VULNERABILITY_STATUSES (ascending = workflow order)
+const STATUS_RANK = Object.fromEntries(VULNERABILITY_STATUSES.map((s, i) => [s, i]));
 
 /**
  * Sort a vulnerability array.
@@ -76,6 +87,10 @@ export function sortVulns(vulns, sortKey, sortDir) {
       case 'internetFacing':
         av = a.internetFacing ? 1 : 0;
         bv = b.internetFacing ? 1 : 0;
+        break;
+      case 'status':
+        av = STATUS_RANK[a.status ?? 'Open'] ?? 999;
+        bv = STATUS_RANK[b.status ?? 'Open'] ?? 999;
         break;
       default:
         av = a[sortKey];

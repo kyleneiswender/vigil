@@ -14,6 +14,8 @@ import {
   resolveWeights,
   DEFAULT_WEIGHTS,
   TIER_COLORS,
+  VULNERABILITY_STATUSES,
+  CLOSED_STATUSES,
 } from './scoringEngine.js';
 
 // ─── normalizeCvss ────────────────────────────────────────────────────────────
@@ -635,5 +637,44 @@ describe('scoreVulnerability — thresholds param', () => {
     const r1 = scoreVulnerability(vuln, DEFAULT_WEIGHTS, { critical: 80, high: 60, medium: 40 });
     const r2 = scoreVulnerability(vuln, DEFAULT_WEIGHTS, { critical: 50, high: 30, medium: 15 });
     expect(r1.compositeScore).toBe(r2.compositeScore);
+  });
+});
+
+// ─── VULNERABILITY_STATUSES and CLOSED_STATUSES ───────────────────────────────
+
+describe('CLOSED_STATUSES', () => {
+  it('contains exactly Remediated, Accepted Risk, and False Positive', () => {
+    expect(CLOSED_STATUSES).toHaveLength(3);
+    expect(CLOSED_STATUSES).toContain('Remediated');
+    expect(CLOSED_STATUSES).toContain('Accepted Risk');
+    expect(CLOSED_STATUSES).toContain('False Positive');
+  });
+
+  it('does NOT contain Risk Re-opened', () => {
+    expect(CLOSED_STATUSES).not.toContain('Risk Re-opened');
+  });
+
+  it('does NOT contain Open or In Progress', () => {
+    expect(CLOSED_STATUSES).not.toContain('Open');
+    expect(CLOSED_STATUSES).not.toContain('In Progress');
+  });
+});
+
+describe('VULNERABILITY_STATUSES', () => {
+  it('contains all six expected status values', () => {
+    expect(VULNERABILITY_STATUSES).toHaveLength(6);
+    ['Open', 'In Progress', 'Remediated', 'Accepted Risk', 'False Positive', 'Risk Re-opened'].forEach((s) => {
+      expect(VULNERABILITY_STATUSES).toContain(s);
+    });
+  });
+
+  it('Open is the first status (workflow start)', () => {
+    expect(VULNERABILITY_STATUSES[0]).toBe('Open');
+  });
+
+  it('all CLOSED_STATUSES are members of VULNERABILITY_STATUSES', () => {
+    CLOSED_STATUSES.forEach((s) => {
+      expect(VULNERABILITY_STATUSES).toContain(s);
+    });
   });
 });

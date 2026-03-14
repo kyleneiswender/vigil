@@ -121,6 +121,8 @@ export default function SettingsPanel({
   orgDefaultWeights = null,
   onThresholdsSaved,
   onDefaultWeightsSaved,
+  catAnimationEnabled = true,
+  onCatAnimationToggle,
 }) {
   const [nvdKey,      setNvdKey]      = useState('');
   const [showKey,     setShowKey]     = useState(false);
@@ -785,6 +787,33 @@ export default function SettingsPanel({
           )}
           </>
         )}
+
+        {/* ── Preferences (all users) ── */}
+        <SettingsSection title="Preferences" description="Personal display preferences stored locally on this device.">
+          <label className="flex cursor-pointer items-center justify-between gap-4">
+            <div>
+              <span className="text-sm font-medium text-gray-700">Celebration animations</span>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Play a 🐈‍⬛ animation when a vulnerability is marked Remediated.
+              </p>
+            </div>
+            <div className="relative flex-shrink-0">
+              <input
+                type="checkbox"
+                checked={catAnimationEnabled}
+                onChange={(e) => onCatAnimationToggle?.(e.target.checked)}
+                className="sr-only"
+              />
+              <div
+                className={`h-6 w-11 rounded-full transition-colors ${catAnimationEnabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+                onClick={() => onCatAnimationToggle?.(!catAnimationEnabled)}
+              />
+              <div
+                className={`pointer-events-none absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${catAnimationEnabled ? 'translate-x-5' : 'translate-x-0.5'}`}
+              />
+            </div>
+          </label>
+        </SettingsSection>
       </div>
     </div>
   );

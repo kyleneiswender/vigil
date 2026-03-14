@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { fetchGroups, fetchUsers } from '../lib/api.js';
 import { formatEpssScore, formatEpssPercentile } from '../utils/epssUtils.js';
 import { formatDate } from '../utils/exportUtils.js';
+import { VULNERABILITY_STATUSES, CLOSED_STATUSES } from '../utils/scoringEngine.js';
 
 const CVE_PATTERN = /^CVE-\d{4}-\d{4,}$/i;
 const MAX_DAYS = 36500;
@@ -32,6 +33,8 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
     assignedTo:         vuln.assignedTo    ?? '',
     epssScore:          vuln.epssScore     ?? null,
     epssPercentile:     vuln.epssPercentile ?? null,
+    status:             vuln.status        ?? 'Open',
+    statusComment:      '',
   }));
   const [errors, setErrors]       = useState({});
   const [saving, setSaving]       = useState(false);
@@ -82,6 +85,9 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
       next.cveId = 'CVE ID must match format CVE-YYYY-NNNNN (e.g. CVE-2024-12345)';
     }
     if (!form.title.toString().trim()) next.title = 'Title is required';
+    if (form.status === 'Accepted Risk' && !form.statusComment.trim()) {
+      next.statusComment = 'A justification comment is required when accepting risk';
+    }
 
     const cvss = Number(form.cvssScore);
     if (form.cvssScore === '' || isNaN(cvss)) {
@@ -119,6 +125,8 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
       return;
     }
 
+    const mousePosition = e.type === 'click' ? { x: e.clientX, y: e.clientY } : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
     setSaving(true);
     try {
       await onSave(vuln.id, {
@@ -129,6 +137,7 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
         cvssScore:          Number(form.cvssScore),
         daysSinceDiscovery: Number(form.daysSinceDiscovery),
         affectedAssetCount: Number(form.affectedAssetCount),
+        mousePosition,
       });
     } finally {
       setSaving(false);
@@ -382,6 +391,62 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
             </label>
           </div>
 
+          {/* Status */}
+          <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+            <label htmlFor="edit-status" className={labelClass}>
+              Status
+            </label>
+            <select
+              id="edit-status"
+              name="status"
+              value={form.status}
+              onChange={handleChange}
+              disabled={saving}
+              className={selectClass}
+            >
+              {VULNERABILITY_STATUSES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            {CLOSED_STATUSES.includes(form.status) && (
+              <p className="text-xs text-blue-600">
+                Saving will assign this vulnerability to you and record you as responsible for this decision.
+              </p>
+            )}
+
+            {/* Current comment — read-only display of the most recent saved comment */}
+            {vuln.latestComment && (
+              <div>
+                <p className={labelClass}>Current note</p>
+                <p className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap">
+                  {vuln.latestComment}
+                </p>
+              </div>
+            )}
+
+            {/* New comment for this status change */}
+            <div>
+              <label htmlFor="edit-statusComment" className={labelClass}>
+                {form.status === 'Accepted Risk' ? (
+                  <>{vuln.latestComment ? 'Update note' : 'Note'} <span className="text-red-500">*</span></>
+                ) : (
+                  vuln.latestComment ? 'Update note' : 'Note'
+                )}
+              </label>
+              <textarea
+                id="edit-statusComment"
+                name="statusComment"
+                rows={3}
+                value={form.statusComment}
+                onChange={handleChange}
+                disabled={saving}
+                placeholder={form.status === 'Accepted Risk' ? 'Justification for accepting this risk…' : 'Optional note about this status change'}
+                className={`${inputClass} resize-none ${errors.statusComment ? errCls : ''}`}
+              />
+              {errors.statusComment && <p className="mt-1 text-xs text-red-600">{errors.statusComment}</p>}
+            </div>
+          </div>
+
           {/* Group */}
           <div>
             <label htmlFor="edit-group" className={labelClass}>
@@ -448,7 +513,7 @@ export default function VulnEditPanel({ vuln, organizationId, onSave, onCancel }
             type="submit"
             form={undefined}
             onClick={handleSubmit}
-            disabled={saving}
+            disabled={saving || (form.status === 'Accepted Risk' && !form.statusComment.trim())}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Save Changes'}

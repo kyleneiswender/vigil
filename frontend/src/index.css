@@ -8,3 +8,9 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Closed vulnerability rows (Remediated, Accepted Risk, False Positive) */
+.vuln-row--closed td:not(:last-child) {
+  text-decoration: line-through;
+  opacity: 0.6;
+}

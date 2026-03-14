@@ -8,6 +8,7 @@ import Auth                 from './components/Auth';
 import UserManagementPanel  from './components/UserManagementPanel';
 import SettingsPanel        from './components/SettingsPanel';
 import IntelligenceTab      from './components/IntelligenceTab';
+import CatAnimation         from './components/CatAnimation';
 import { pb, isAuthenticated, getCurrentUser, logout } from './lib/pocketbase.js';
 import {
   initializeUser,
@@ -17,6 +18,7 @@ import {
   fetchScoringWeights,
   updateScoringWeights,
   updateVulnerability,
+  changeVulnerabilityStatus,
   fetchOrgSettings,
   updateOrgSettings,
   syncKevFeed,
@@ -26,6 +28,11 @@ import {
   deleteRssFeed,
   fetchRssFeedContent,
   updateRiskTierBatch,
+  fetchGroups,
+  fetchUsers,
+  bulkAssignGroup,
+  bulkAssignUser,
+  bulkDeleteVulnerabilities,
 } from './lib/api.js';
 import { scoreVulnerability, DEFAULT_WEIGHTS, getRiskTier, resolveWeights } from './utils/scoringEngine';
 import {
@@ -70,6 +77,15 @@ export default function App() {
   const [feedErrors,         setFeedErrors]         = useState({});
   const [readArticleUrls,    setReadArticleUrls]    = useState(new Set());
   const [prefilledCveId,     setPrefilledCveId]     = useState(null);
+  const [catAnimation,       setCatAnimation]       = useState(null);
+  const [catAnimationEnabled, setCatAnimationEnabled] = useState(() => {
+    try { return localStorage.getItem('vuln_tool_pref_cat_animation') !== 'false'; }
+    catch { return true; }
+  });
+  const [selectedVulnIds, setSelectedVulnIds] = useState(new Set());
+  const [bulkResult,      setBulkResult]      = useState(null); // { type: 'success'|'warn'|'error', message }
+  const [groups,          setGroups]          = useState([]);
+  const [orgUsers,        setOrgUsers]        = useState([]);
 
   const trackedCveIds = useMemo(
     () => vulnerabilities.map((v) => v.cveId).filter(Boolean),
@@ -137,15 +153,19 @@ export default function App() {
         } catch { /* sessionStorage unavailable or corrupted — ignore */ }
       }
 
-      const [records, weightsRecord, settingsRecord, feedsData] = await Promise.all([
+      const [records, weightsRecord, settingsRecord, feedsData, groupsData, usersData] = await Promise.all([
         fetchVulnerabilities(orgId),
         fetchScoringWeights(orgId),
         fetchOrgSettings(orgId),
         fetchRssFeeds(orgId),
+        fetchGroups(orgId),
+        fetchUsers(orgId),
       ]);
 
       setOrgSettings(settingsRecord);
       setRssFeeds(feedsData);
+      setGroups(groupsData);
+      setOrgUsers(usersData);
 
       // Extract risk tier thresholds and org default weights from settings record
       const resolvedThresholds = settingsRecord
@@ -303,12 +323,31 @@ export default function App() {
   }
 
   async function handleEditSave(id, updatedFields) {
-    const scored = scoreVulnerability(updatedFields, weights, riskThresholds);
+    const { status: newStatus, statusComment, mousePosition, ...scoringFields } = updatedFields;
+    const currentVuln = vulnerabilities.find((v) => v.id === id);
+    const scored = scoreVulnerability(scoringFields, weights, riskThresholds);
     try {
       const record = await updateVulnerability(id, scored, organizationIdRef.current);
+
+      // Handle status change via dedicated function (separate audit entry)
+      const previousStatus = currentVuln?.status ?? 'Open';
+      const effectiveStatus = newStatus ?? previousStatus;
+      if (effectiveStatus !== previousStatus || statusComment) {
+        const user = getCurrentUser();
+        await changeVulnerabilityStatus(id, effectiveStatus, statusComment || null, user?.id, organizationIdRef.current);
+      }
+
       setVulnerabilities((prev) =>
-        prev.map((v) => (v.id === id ? scoreVulnerability(record, weights, riskThresholds) : v))
+        prev.map((v) => (v.id === id
+          ? scoreVulnerability({ ...record, status: effectiveStatus, latestComment: statusComment || record.latestComment || null }, weights, riskThresholds)
+          : v))
       );
+
+      // Cat animation fires when status is being set to Remediated
+      if (effectiveStatus === 'Remediated') {
+        triggerCatAnimation(mousePosition);
+      }
+
       setEditingVuln(null);
     } catch (err) {
       setError('Failed to update vulnerability: ' + (err?.message ?? 'unknown error'));
@@ -346,6 +385,87 @@ export default function App() {
 
   function handleDefaultWeightsSaved(newDefaultWeights) {
     setOrgDefaultWeights(newDefaultWeights);
+  }
+
+  const triggerCatAnimation = useCallback((mousePosition) => {
+    if (!catAnimationEnabled) return;
+    setCatAnimation({ position: mousePosition });
+  }, [catAnimationEnabled]);
+
+  const handleCatComplete = useCallback(() => {
+    setCatAnimation(null);
+  }, []);
+
+  function handleCatAnimationToggle(enabled) {
+    setCatAnimationEnabled(enabled);
+    try { localStorage.setItem('vuln_tool_pref_cat_animation', String(enabled)); } catch {}
+  }
+
+  // ── Bulk action handlers ──────────────────────────────────────────────────
+
+  function _applyBulkResult({ succeeded, failed, total }) {
+    if (failed === 0) {
+      setBulkResult({ type: 'success', message: `${succeeded} record${succeeded !== 1 ? 's' : ''} updated.` });
+      setTimeout(() => setBulkResult(null), 3000);
+    } else if (succeeded > 0) {
+      setBulkResult({ type: 'warn', message: `${succeeded} of ${total} records updated (${failed} failed).` });
+    } else {
+      setBulkResult({ type: 'error', message: `All ${total} updates failed.` });
+    }
+  }
+
+  async function handleBulkStatusChange(ids, newStatus, comment) {
+    const user  = getCurrentUser();
+    const orgId = organizationIdRef.current;
+    const results = await Promise.allSettled(
+      ids.map((id) => changeVulnerabilityStatus(id, newStatus, comment, user?.id, orgId, { bulkAction: true }))
+    );
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed    = results.filter((r) => r.status === 'rejected').length;
+
+    const fresh = await fetchVulnerabilities(orgId);
+    setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights, riskThresholds)));
+    setSelectedVulnIds(new Set());
+
+    if (newStatus === 'Remediated') {
+      triggerCatAnimation({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+    }
+
+    _applyBulkResult({ succeeded, failed, total: ids.length });
+  }
+
+  async function handleBulkAssignGroup(ids, groupId) {
+    const orgId = organizationIdRef.current;
+    const result = await bulkAssignGroup(ids, groupId, orgId);
+    const fresh  = await fetchVulnerabilities(orgId);
+    setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights, riskThresholds)));
+    setSelectedVulnIds(new Set());
+    _applyBulkResult(result);
+  }
+
+  async function handleBulkAssignUser(ids, userId) {
+    const orgId = organizationIdRef.current;
+    const result = await bulkAssignUser(ids, userId, orgId);
+    const fresh  = await fetchVulnerabilities(orgId);
+    setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights, riskThresholds)));
+    setSelectedVulnIds(new Set());
+    _applyBulkResult(result);
+  }
+
+  async function handleBulkDelete(ids) {
+    const orgId = organizationIdRef.current;
+    const result = await bulkDeleteVulnerabilities(ids, orgId);
+    const fresh  = await fetchVulnerabilities(orgId);
+    setVulnerabilities(fresh.map((r) => scoreVulnerability(r, weights, riskThresholds)));
+    setSelectedVulnIds(new Set());
+    if (result.failed === 0) {
+      setBulkResult({ type: 'success', message: `${result.succeeded} record${result.succeeded !== 1 ? 's' : ''} deleted.` });
+      setTimeout(() => setBulkResult(null), 3000);
+    } else if (result.succeeded > 0) {
+      setBulkResult({ type: 'warn', message: `${result.succeeded} of ${result.total} records deleted (${result.failed} failed).` });
+    } else {
+      setBulkResult({ type: 'error', message: `All ${result.total} deletions failed.` });
+    }
   }
 
   async function handleAddFeed(name, url) {
@@ -480,6 +600,11 @@ export default function App() {
     setReadArticleUrls(new Set());
     setLoadFailed(false);
     setError('');
+    setCatAnimation(null);
+    setSelectedVulnIds(new Set());
+    setBulkResult(null);
+    setGroups([]);
+    setOrgUsers([]);
   }
 
   // ── Render: unauthenticated ──────────────────────────────────────────────────
@@ -545,7 +670,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
-                <p className="text-xs text-gray-500">v0.8.3 &mdash; CVE auto-detection in feeds</p>
+                <p className="text-xs text-gray-500">v0.9.2 &mdash; Bulk actions</p>
               </div>
             </div>
 
@@ -610,10 +735,10 @@ export default function App() {
       <div className="bg-white border-b border-gray-200">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <nav className="flex gap-0" aria-label="Main navigation">
-            <TabButton active={activeTab === 'vulnerabilities'} onClick={() => setActiveTab('vulnerabilities')}>
+            <TabButton active={activeTab === 'vulnerabilities'} onClick={() => { setActiveTab('vulnerabilities'); setSelectedVulnIds(new Set()); }}>
               Vulnerabilities
             </TabButton>
-            <TabButton active={activeTab === 'intelligence'} onClick={() => setActiveTab('intelligence')} badge={unreadCount}>
+            <TabButton active={activeTab === 'intelligence'} onClick={() => { setActiveTab('intelligence'); setSelectedVulnIds(new Set()); }} badge={unreadCount}>
               Intelligence
             </TabButton>
           </nav>
@@ -650,7 +775,34 @@ export default function App() {
           <CsvImport    onImport={handleImport} />
           <VulnForm     onAdd={handleAdd} nvdApiKey={orgSettings?.nvd_api_key ?? ''} prefilledCveId={prefilledCveId} onPrefillConsumed={() => setPrefilledCveId(null)} />
           <WeightConfig weights={weights} onWeightsChange={handleWeightsChange} />
-          <VulnTable    vulnerabilities={vulnerabilities} onDelete={handleDelete} onEdit={(vuln) => setEditingVuln(vuln)} weights={weights} riskThresholds={riskThresholds} />
+
+          {/* Bulk action result banner */}
+          {bulkResult && (
+            <div className={`flex items-center justify-between rounded-md border px-4 py-3 text-sm ${
+              bulkResult.type === 'success' ? 'border-green-200 bg-green-50 text-green-800' :
+              bulkResult.type === 'warn'    ? 'border-amber-200 bg-amber-50 text-amber-800' :
+                                             'border-red-200 bg-red-50 text-red-800'
+            }`}>
+              <span>{bulkResult.message}</span>
+              <button onClick={() => setBulkResult(null)} className="ml-4 opacity-60 hover:opacity-100 text-current font-bold">✕</button>
+            </div>
+          )}
+
+          <VulnTable
+            vulnerabilities={vulnerabilities}
+            onDelete={handleDelete}
+            onEdit={(vuln) => setEditingVuln(vuln)}
+            weights={weights}
+            riskThresholds={riskThresholds}
+            selectedVulnIds={selectedVulnIds}
+            onSelectionChange={setSelectedVulnIds}
+            onBulkStatusChange={handleBulkStatusChange}
+            onBulkAssignGroup={handleBulkAssignGroup}
+            onBulkAssignUser={handleBulkAssignUser}
+            onBulkDelete={handleBulkDelete}
+            groups={groups}
+            orgUsers={orgUsers}
+          />
         </main>
       )}
       {activeTab === 'intelligence' && (
@@ -677,6 +829,13 @@ export default function App() {
         />
       )}
 
+      {catAnimation && (
+        <CatAnimation
+          triggerPosition={catAnimation.position}
+          onComplete={handleCatComplete}
+        />
+      )}
+
       {showUserMgmt && (
         <UserManagementPanel
           organizationId={organizationIdRef.current}
@@ -700,6 +859,8 @@ export default function App() {
           orgDefaultWeights={orgDefaultWeights}
           onThresholdsSaved={handleThresholdsSaved}
           onDefaultWeightsSaved={handleDefaultWeightsSaved}
+          catAnimationEnabled={catAnimationEnabled}
+          onCatAnimationToggle={handleCatAnimationToggle}
         />
       )}
     </div>
