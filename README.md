@@ -6,7 +6,7 @@ A self-hosted web application for triaging and prioritising security vulnerabili
 
 Enter vulnerabilities manually or import them from CSV. Each vulnerability is scored 0–100 using seven weighted factors (CVSS score, asset criticality, asset count, internet exposure, exploitability, EPSS score, and days since discovery). Scores are grouped into **Critical / High / Medium / Low** risk tiers. Weights are fully adjustable per organisation and are persisted to the backend.
 
-Data is stored in [PocketBase](https://pocketbase.io/) — a single self-contained binary — so nothing leaves your network.
+Data is stored in [PocketBase](https://pocketbase.io/) - a single self-contained binary - so nothing leaves your network.
 
 ## Highlights
 
