@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vulnerability Prioritization Tool — cleanup script (macOS / Linux)
+# Vigil — cleanup script (macOS / Linux)
 # Kills any orphaned PocketBase and Vite/node processes left behind
 # after an unclean shutdown.
 

@@ -1,6 +1,6 @@
 /// <reference path="../pb_data/types.d.ts" />
 //
-// Initial schema for the Vulnerability Prioritization Tool.
+// Initial schema for Vigil.
 //
 // Compatible with PocketBase v0.36.x — uses the generic `new Field({ type, … })`
 // constructor and `fields.addAt()` instead of the older typed constructors

@@ -1,5 +1,5 @@
 @echo off
-REM Vulnerability Prioritization Tool — cleanup script (Windows)
+REM Vigil — cleanup script (Windows)
 REM Kills any orphaned PocketBase and Vite/node processes left behind
 REM after an unclean shutdown.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vulnerability Prioritization Tool — database backup script (macOS / Linux)
+# Vigil — database backup script (macOS / Linux)
 # Copies backend/pb_data to a timestamped folder under backups/.
 
 set -euo pipefail

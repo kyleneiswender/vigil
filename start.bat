@@ -1,5 +1,5 @@
 @echo off
-REM Vulnerability Prioritization Tool — startup script (Windows)
+REM Vigil — startup script (Windows)
 REM Usage: start.bat
 REM Starts PocketBase on :8090 and the Vite dev server on :5173.
 
@@ -30,6 +30,40 @@ if not exist "%PB_BIN%" (
   del "!PB_ZIP!"
 
   echo [start.bat] PocketBase v!PB_VERSION! downloaded to %PB_BIN%
+)
+
+REM ── Locate npm ──────────────────────────────────────────────────────────────
+REM On a fresh machine, Node.js may not be on the system PATH yet even after
+REM installation (installer requires a new shell session to take effect).
+REM Check the two standard install locations and add the right one to PATH.
+
+where npm >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+  set NPM_FOUND=0
+
+  if exist "%ProgramFiles%\nodejs\npm.cmd" (
+    set "PATH=%ProgramFiles%\nodejs;%PATH%"
+    set NPM_FOUND=1
+    echo [start.bat] Found Node.js at %ProgramFiles%\nodejs — added to PATH for this session.
+  )
+
+  if !NPM_FOUND! EQU 0 (
+    if exist "%LOCALAPPDATA%\Programs\nodejs\npm.cmd" (
+      set "PATH=%LOCALAPPDATA%\Programs\nodejs;%PATH%"
+      set NPM_FOUND=1
+      echo [start.bat] Found Node.js at %LOCALAPPDATA%\Programs\nodejs — added to PATH for this session.
+    )
+  )
+
+  if !NPM_FOUND! EQU 0 (
+    echo.
+    echo [start.bat] ERROR: npm not found.
+    echo             Please install Node.js 18+ from https://nodejs.org/ then re-run this script.
+    echo             If Node.js is already installed, open a new terminal window and try again.
+    echo.
+    pause
+    exit /b 1
+  )
 )
 
 REM ── Frontend dependencies ───────────────────────────────────────────────────

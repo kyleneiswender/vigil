@@ -1,4 +1,4 @@
-# Vulnerability Prioritization Tool — process manager (Windows)
+# Vigil — process manager (Windows)
 # Called by start.bat after download/install steps are complete.
 # Launches PocketBase and Vite, captures PIDs, and ensures both are
 # killed on Ctrl-C or terminal close via try/finally.

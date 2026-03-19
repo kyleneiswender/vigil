@@ -47,7 +47,7 @@ export default function Auth({ onAuthenticated }) {
             </svg>
           </div>
           <div className="text-center">
-            <h1 className="text-xl font-bold text-gray-900">Vulnerability Prioritization Tool</h1>
+            <h1 className="text-xl font-bold text-gray-900">Vigil</h1>
             <p className="mt-1 text-sm text-gray-500">Sign in to your account</p>
           </div>
         </div>

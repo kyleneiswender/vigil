@@ -1,5 +1,5 @@
 @echo off
-REM Vulnerability Prioritization Tool — database backup script (Windows)
+REM Vigil — database backup script (Windows)
 REM Copies backend\pb_data to a timestamped folder under backups\.
 
 setlocal enabledelayedexpansion

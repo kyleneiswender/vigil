@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Vulnerability Prioritization Tool — startup script (macOS / Linux)
+# Vigil — startup script (macOS / Linux)
 # Usage: ./start.sh
 # Starts PocketBase on :8090 and the Vite dev server on :5173.
 
@@ -43,6 +43,15 @@ if [ ! -f "$PB_BIN" ]; then
   chmod +x "$PB_BIN"
   rm -rf "$TMP_DIR"
   echo "[start.sh] PocketBase v${PB_VERSION} downloaded to $PB_BIN"
+fi
+
+# ── Locate npm ────────────────────────────────────────────────────────────────
+
+if ! command -v npm &>/dev/null; then
+  echo "[start.sh] ERROR: npm not found."
+  echo "           Install Node.js 18+ from https://nodejs.org/"
+  echo "           If using nvm, source it first: source ~/.nvm/nvm.sh && nvm use --lts && ./start.sh"
+  exit 1
 fi
 
 # ── Frontend dependencies ─────────────────────────────────────────────────────

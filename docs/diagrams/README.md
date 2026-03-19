@@ -1,7 +1,7 @@
 # Architecture Flow Diagrams
 
 This directory contains Mermaid flowchart diagrams documenting the key workflows
-in the Vulnerability Prioritization Tool.
+in Vigil.
 
 ## Diagrams
 
