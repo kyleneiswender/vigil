@@ -14,12 +14,45 @@ routerAdd('GET', '/api/rss-proxy', (e) => {
     return e.json(400, { error: 'url parameter required' });
   }
 
+  // SSRF guard — block private/loopback targets.
+  // Inline to avoid goja module-scope function accessibility issues.
+  var _s = String(url).toLowerCase();
+  var _ssrfBlocked = false;
+  if (_s.indexOf('http://') !== 0 && _s.indexOf('https://') !== 0) {
+    _ssrfBlocked = true;
+  } else {
+    var _afterProto = _s.indexOf('://') + 3;
+    var _rest = _s.slice(_afterProto);
+    var _end = _rest.length;
+    var _sl = _rest.indexOf('/'); if (_sl !== -1 && _sl < _end) _end = _sl;
+    var _q  = _rest.indexOf('?'); if (_q  !== -1 && _q  < _end) _end = _q;
+    var _h  = _rest.indexOf('#'); if (_h  !== -1 && _h  < _end) _end = _h;
+    var _hwp = _rest.slice(0, _end);
+    var _cp  = _hwp.indexOf(':');
+    var _host = _cp !== -1 ? _hwp.slice(0, _cp) : _hwp;
+    if (!_host ||
+        _host === 'localhost' || _host === '::1' ||
+        _host.indexOf('127.')     === 0 ||
+        _host.indexOf('10.')      === 0 ||
+        _host.indexOf('192.168.') === 0 ||
+        _host.indexOf('169.254.') === 0) {
+      _ssrfBlocked = true;
+    } else if (_host.indexOf('172.') === 0) {
+      var _parts  = _host.split('.');
+      var _second = parseInt(_parts[1], 10);
+      if (_second >= 16 && _second <= 31) _ssrfBlocked = true;
+    }
+  }
+  if (_ssrfBlocked) {
+    return e.json(400, { error: 'invalid or disallowed url' });
+  }
+
   try {
     const response = $http.send({
       url:    url,
       method: 'GET',
       headers: {
-        'User-Agent': 'VulnPrioritizationTool/1.0',
+        'User-Agent': 'Vigil/1.0',
         'Accept':     'application/rss+xml, application/atom+xml, application/xml, text/xml',
       },
       timeout: 10,
